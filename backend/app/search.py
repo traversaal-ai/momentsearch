@@ -38,6 +38,18 @@ def retrieve(question: str, top_k: int | None = None, video_id: str | None = Non
     return citations
 
 
+def _fallback_answer(citations: list[dict[str, Any]]) -> str:
+    """A no-LLM summary: rank the visually-closest moments. Honest about being
+    similarity, not synthesis."""
+    top = citations[0]
+    where = f"{top['title']} at {top['timestamp']}" if top.get("title") else top["timestamp"]
+    others = ", ".join(f"{c['timestamp']} [{c['n']}]" for c in citations[1:4])
+    msg = f"Closest visual match: {where} [{top['n']}] (similarity {top['score']})."
+    if others:
+        msg += f" Other relevant moments: {others}."
+    return msg
+
+
 def _deeplink(hit: dict[str, Any]) -> str | None:
     """A jump-to-moment link: YouTube `?t=` for URLs, else the served clip."""
     url, source, ms = hit.get("url"), hit.get("source"), hit.get("ms", 0)
@@ -57,10 +69,13 @@ def ask(question: str, top_k: int | None = None, video_id: str | None = None) ->
         result["llm_used"] = False
         return result
     if not s.llm_configured:
-        result["answer"] = None
+        # No generative LLM configured. CLIP is an embedding model — it can't write
+        # prose — so instead of inventing an answer we summarize the best-matching
+        # moments by their visual similarity. Still useful, and fully local.
+        result["answer"] = _fallback_answer(citations)
         result["llm_used"] = False
-        result["note"] = ("Showing the most relevant frames. Configure an LLM "
-                           "(LLM_API_KEY in .env) to get a synthesized answer.")
+        result["note"] = ("Visual-similarity results only. Set LLM_API_KEY in .env "
+                           "for a synthesized, frame-grounded answer.")
         return result
     frame_paths = [s.frame_dir / c["frame"] for c in citations if c.get("frame")]
     result["answer"] = llm.answer(question, frame_paths)
