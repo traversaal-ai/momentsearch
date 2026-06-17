@@ -33,6 +33,10 @@ docker compose up --build
 
 Open **http://localhost:8000**. Paste a YouTube URL, wait for ingestion, then ask away.
 
+> **Just want to see it work?** [`examples/quickstart.py`](examples/quickstart.py) ingests four
+> LLM talks (3Blue1Brown + Karpathy) and runs sample visual queries against them. See
+> [`examples/`](examples/).
+
 ## Quickstart (local, no Docker)
 
 You need **Python 3.11+** and **FFmpeg** installed.
@@ -89,12 +93,15 @@ MomentSearch never hardcodes a model. Set these in `.env`:
 | Provider | `LLM_PROVIDER` | `LLM_BASE_URL` | `LLM_MODEL` (must be vision-capable) |
 |---|---|---|---|
 | OpenAI | `openai` | *(blank)* | `gpt-4o-mini`, `gpt-4o` |
+| NVIDIA (NIM / build.nvidia.com) | `nvidia` | *(auto)* | `meta/llama-3.2-90b-vision-instruct`, `meta/llama-3.2-11b-vision-instruct` |
 | Ollama (local) | `openai` | `http://localhost:11434/v1` | `llava`, `llama3.2-vision`, `qwen2.5-vl` |
 | vLLM / LM Studio | `openai` | `http://localhost:8000/v1` | *(your served model)* |
 | Together / Groq / OpenRouter | `openai` | their `/v1` base URL | *(a vision model)* |
 | Anthropic | `anthropic` | *(blank)* | `claude-sonnet-4-6`, `claude-opus-4-8` |
 
 Anything that speaks the OpenAI Chat Completions API works via `LLM_BASE_URL`.
+For **NVIDIA**, set `LLM_PROVIDER=nvidia` and `LLM_API_KEY` to your
+[build.nvidia.com](https://build.nvidia.com) key — the endpoint is pre-filled.
 
 ## Configuration
 

@@ -40,7 +40,10 @@ def fetch_youtube(url: str, progress: Progress = _noop) -> tuple[str, str, Path]
     progress("download", {"message": "Resolving video…", "url": url})
 
     opts = {
-        "format": "mp4/bestvideo[ext=mp4]+bestaudio/best",
+        # We only ever look at the picture, so grab a small video-only stream
+        # (<=480p). CLIP downsizes to 224px anyway — 4K would just waste bandwidth.
+        "format": ("bestvideo[height<=480][ext=mp4]/bestvideo[height<=480]/"
+                   "best[height<=480][ext=mp4]/best[height<=480]/best"),
         "outtmpl": str(s.video_dir / "%(id)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,

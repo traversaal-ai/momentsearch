@@ -3,13 +3,16 @@
 MomentSearch retrieves the most relevant *frames* for a question and then asks a
 vision-capable LLM to read those frames and answer, citing each frame as [n].
 
-Two providers are supported out of the box:
+Providers supported out of the box:
   * "openai"    — the OpenAI Chat Completions API, which also covers every
                   OpenAI-compatible server (Ollama, vLLM, LM Studio, Together,
                   Groq, OpenRouter, …) via LLM_BASE_URL.
+  * "nvidia"    — NVIDIA NIM / build.nvidia.com hosted vision models
+                  (e.g. meta/llama-3.2-90b-vision-instruct). OpenAI-compatible,
+                  so it uses the same client with NVIDIA's endpoint pre-filled.
   * "anthropic" — the Anthropic Messages API.
 
-Both are optional dependencies; we import them lazily and only the one you use.
+The provider SDKs are optional; we import them lazily and only the one you use.
 """
 from __future__ import annotations
 
@@ -17,6 +20,9 @@ import base64
 from pathlib import Path
 
 from .config import get_settings
+
+# NVIDIA's hosted inference endpoint (OpenAI-compatible).
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 SYSTEM = (
     "You answer questions about a video using ONLY the numbered frames provided. "
@@ -53,11 +59,20 @@ def answer(question: str, frame_paths: list[Path]) -> str:
     return _answer_openai(s, question, frame_paths)
 
 
+def _base_url(s) -> str | None:
+    """Resolve the OpenAI-compatible base URL. An explicit LLM_BASE_URL always
+    wins; otherwise the provider name can imply one (e.g. nvidia)."""
+    if s.LLM_BASE_URL:
+        return s.LLM_BASE_URL
+    if s.LLM_PROVIDER == "nvidia":
+        return NVIDIA_BASE_URL
+    return None
+
+
 def _answer_openai(s, question: str, frame_paths: list[Path]) -> str:
     from openai import OpenAI
 
-    client = OpenAI(api_key=s.LLM_API_KEY or "not-needed",
-                    base_url=s.LLM_BASE_URL or None)
+    client = OpenAI(api_key=s.LLM_API_KEY or "not-needed", base_url=_base_url(s))
     content: list[dict] = [{"type": "text", "text": _prompt(question, len(frame_paths))}]
     for p in frame_paths:
         content.append({"type": "image_url", "image_url": {"url": _data_uri(p)}})
