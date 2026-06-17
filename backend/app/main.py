@@ -200,8 +200,22 @@ def video(video_id: str, range: str | None = Header(default=None)):
 
 # ── UI ─────────────────────────────────────────────────────────────────────
 
+def _render(mode: str) -> str:
+    """Serve the single-page UI in one of two modes:
+      * "sample" (/)            — the curated "Deep Dive into LLMs" demo, read-only
+      * "full"   (/get-started) — bring-your-own-videos (add URL / upload)
+    """
+    if not FRONTEND.exists():
+        return "<h1>MomentSearch</h1><p>frontend/index.html not found.</p>"
+    html = FRONTEND.read_text()
+    return html.replace("<!--MS_MODE-->", f'<script>window.MS_MODE="{mode}";</script>')
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
-    if FRONTEND.exists():
-        return FRONTEND.read_text()
-    return "<h1>MomentSearch</h1><p>frontend/index.html not found.</p>"
+    return _render("sample")
+
+
+@app.get("/get-started", response_class=HTMLResponse)
+def get_started():
+    return _render("full")

@@ -31,11 +31,21 @@ cp .env.example .env          # add your LLM key (optional — search works with
 docker compose up --build
 ```
 
-Open **http://localhost:8000**. Paste a YouTube URL, wait for ingestion, then ask away.
+Two pages, one app:
 
-> **Just want to see it work?** [`examples/quickstart.py`](examples/quickstart.py) ingests four
-> LLM talks (3Blue1Brown + Karpathy) and runs sample visual queries against them. See
-> [`examples/`](examples/).
+| Page | What it is |
+|---|---|
+| **`/`** | **Sample project — "A Deep Dive into LLMs."** Four LLM talks, pre-indexed, read-only. Ask a question and watch the exact moment play. No setup beyond seeding the sample (below). |
+| **`/get-started`** | **Bring your own videos.** Add a YouTube URL or upload a file, then ask. |
+
+Seed the sample corpus once (ingests the four talks):
+
+```bash
+python examples/quickstart.py     # then open http://localhost:8000/
+```
+
+> [`examples/quickstart.py`](examples/quickstart.py) also runs sample queries in the terminal.
+> See [`examples/`](examples/).
 
 ## Quickstart (local, no Docker)
 

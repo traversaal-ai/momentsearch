@@ -35,6 +35,7 @@
   .tab.active{border-color:#FF5A3C;color:#E8472B;background:rgba(255,90,60,.07)}
   ::selection{background:rgba(255,90,60,.22)}
 </style>
+<!--MS_MODE-->
 </head>
 <body class="min-h-screen">
 
@@ -50,16 +51,17 @@
 
 <!-- HERO / ASK -->
 <section class="max-w-6xl mx-auto px-6 pt-12 pb-6">
-  <div class="inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-5">
+  <div id="heroBadge" class="inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-5">
     ● Answers grounded in what's <em>seen</em> on screen — never audio
   </div>
-  <h1 class="display text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.03] tracking-tight max-w-3xl">
+  <h1 id="heroTitle" class="display text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.03] tracking-tight max-w-3xl">
     Ask your videos <span class="text-coral">anything</span> you can see.
   </h1>
-  <p class="mt-4 text-lg text-muted max-w-xl leading-relaxed">
+  <p id="heroSub" class="mt-4 text-lg text-muted max-w-xl leading-relaxed">
     Add a YouTube URL or upload a file. MomentSearch finds the exact moments — and
     plays each one right beside the answer.
   </p>
+  <a id="modeLink" href="/get-started" class="inline-block mt-3 text-sm font-semibold text-coral2 hover:text-coral"></a>
 
   <div class="mt-7 flex flex-col sm:flex-row gap-3 max-w-3xl items-stretch">
     <textarea id="q" rows="1" placeholder="e.g. a diagram of the attention mechanism"
@@ -77,24 +79,26 @@
   <!-- LIBRARY -->
   <section class="bg-card border border-line rounded-2xl p-5 mt-6">
     <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
-      <h2 class="display text-xl font-600">Your videos</h2>
-      <div class="flex gap-2">
+      <h2 id="libTitle" class="display text-xl font-600">Your videos</h2>
+      <div id="addTabs" class="flex gap-2">
         <span class="tab active" data-tab="yt">YouTube URL</span>
         <span class="tab" data-tab="up">Upload</span>
       </div>
     </div>
-    <div id="tab-yt" class="flex gap-2 flex-wrap">
-      <input id="ytUrl" type="text" placeholder="https://youtube.com/watch?v=…"
-        class="flex-1 min-w-[220px] bg-white border border-line rounded-xl px-4 py-2.5 text-sm outline-none focus:border-coral">
-      <button id="ytBtn" class="bg-ink hover:bg-black text-white text-sm font-semibold rounded-xl px-5">Ingest</button>
+    <div id="addControls">
+      <div id="tab-yt" class="flex gap-2 flex-wrap">
+        <input id="ytUrl" type="text" placeholder="https://youtube.com/watch?v=…"
+          class="flex-1 min-w-[220px] bg-white border border-line rounded-xl px-4 py-2.5 text-sm outline-none focus:border-coral">
+        <button id="ytBtn" class="bg-ink hover:bg-black text-white text-sm font-semibold rounded-xl px-5">Ingest</button>
+      </div>
+      <div id="tab-up" class="hidden flex gap-2 flex-wrap items-center">
+        <input id="upFile" type="file" accept="video/*" class="flex-1 min-w-[220px] text-sm">
+        <button id="upBtn" class="bg-ink hover:bg-black text-white text-sm font-semibold rounded-xl px-5 py-2.5">Upload &amp; ingest</button>
+      </div>
+      <div id="ingestStatus" class="text-sm text-muted mt-3 min-h-[20px]"></div>
     </div>
-    <div id="tab-up" class="hidden flex gap-2 flex-wrap items-center">
-      <input id="upFile" type="file" accept="video/*" class="flex-1 min-w-[220px] text-sm">
-      <button id="upBtn" class="bg-ink hover:bg-black text-white text-sm font-semibold rounded-xl px-5 py-2.5">Upload &amp; ingest</button>
-    </div>
-    <div id="ingestStatus" class="text-sm text-muted mt-3 min-h-[20px]"></div>
     <div id="videos" class="flex flex-wrap gap-2 mt-2"></div>
-    <p class="text-xs text-muted mt-3">Looks only at the picture (frames), never audio. First ingest downloads the CLIP model.</p>
+    <p id="libNote" class="text-xs text-muted mt-3">Looks only at the picture (frames), never audio. First ingest downloads the CLIP model.</p>
   </section>
 
   <!-- RESULTS -->
@@ -141,6 +145,27 @@
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let CITES=[];
+const MODE = window.MS_MODE || "sample";   // "sample" (curated, read-only) | "full" (add your own)
+
+/* ---------- mode-specific framing ---------- */
+function applyMode(){
+  if(MODE==="full"){
+    $("#heroBadge").innerHTML='● Bring your own videos';
+    $("#heroTitle").innerHTML='Ask your videos <span class="text-coral">anything</span> you can see.';
+    $("#heroSub").textContent='Add a YouTube URL or upload a file. MomentSearch finds the exact moments — and plays each one right beside the answer.';
+    $("#modeLink").textContent='← Back to the sample';     $("#modeLink").href='/';
+    $("#libTitle").textContent='Your videos';
+  } else {
+    $("#heroBadge").innerHTML='● Sample project · four LLM talks, pre-indexed';
+    $("#heroTitle").innerHTML='A Deep Dive into <span class="text-coral">LLMs</span>.';
+    $("#heroSub").textContent='Ask anything about these four talks — MomentSearch finds the exact moment on screen and plays it right here. Visual only; it never reads the audio.';
+    $("#modeLink").textContent='Want your own videos? Get started →';   $("#modeLink").href='/get-started';
+    $("#libTitle").textContent='In this deep dive';
+    $("#addTabs").classList.add("hidden");
+    $("#addControls").classList.add("hidden");
+    $("#libNote").textContent='A curated set of LLM explainers and talks, indexed by what appears on screen.';
+  }
+}
 
 /* ---------- markdown (bold, bullets, [n] pills) ---------- */
 function mdInline(t){
@@ -168,10 +193,16 @@ async function loadVideos(){
   const {videos}=await (await fetch("/api/videos")).json();
   const box=$("#videos"), scope=$("#scope");
   scope.innerHTML='<option value="">All videos</option>';
-  if(!videos.length){ box.innerHTML='<span class="text-muted text-sm">No videos yet — add one above.</span>'; return; }
-  box.innerHTML=videos.map(v=>`<span class="chip" style="cursor:default">${esc(v.title)} <span class="text-muted">· ${v.frames}f</span>
-    <button class="ml-1 text-muted hover:text-coral2" data-del="${esc(v.video_id)}" title="Remove">✕</button></span>`).join("");
-  box.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{ await fetch("/api/videos/"+encodeURIComponent(b.dataset.del),{method:"DELETE"}); loadVideos(); });
+  if(!videos.length){
+    box.innerHTML = MODE==="full"
+      ? '<span class="text-muted text-sm">No videos yet — add one above.</span>'
+      : '<span class="text-muted text-sm">Sample not loaded yet — run <code class="px-1 rounded bg-paper2">python examples/quickstart.py</code> to index the four talks.</span>';
+    return;
+  }
+  const del = MODE==="full";
+  box.innerHTML=videos.map(v=>`<span class="chip" style="cursor:default">${esc(v.title)} <span class="text-muted">· ${v.frames}f</span>${
+    del?`<button class="ml-1 text-muted hover:text-coral2" data-del="${esc(v.video_id)}" title="Remove">✕</button>`:""}</span>`).join("");
+  if(del) box.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{ await fetch("/api/videos/"+encodeURIComponent(b.dataset.del),{method:"DELETE"}); loadVideos(); });
   scope.insertAdjacentHTML("beforeend", videos.map(v=>`<option value="${esc(v.video_id)}">${esc(v.title)}</option>`).join(""));
 }
 
@@ -275,7 +306,7 @@ const EXAMPLES=["a diagram of the attention mechanism","an animation of a neural
 $("#examples").innerHTML=EXAMPLES.map(q=>`<span class="chip">${esc(q)}</span>`).join("");
 $("#examples").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ qEl.value=c.textContent; autogrow(); qEl.focus(); });
 
-loadConfig(); loadVideos();
+applyMode(); loadConfig(); loadVideos();
 </script>
 </body>
 </html>
