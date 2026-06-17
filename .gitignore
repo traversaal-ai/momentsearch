@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.python-version
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data (videos, extracted frames, qdrant storage)
+data/
+backend/data/
+qdrant_storage/
+
+# Model caches
+.cache/
+*.pt
+*.onnx
+
+# Node / frontend
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log

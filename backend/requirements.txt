@@ -1,0 +1,20 @@
+# Web
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+python-dotenv>=1.0
+
+# Vector DB
+qdrant-client>=1.9
+
+# Visual embeddings (CLIP) — pulls torch
+sentence-transformers>=2.7
+pillow>=10.0
+numpy>=1.24
+
+# Video acquisition
+yt-dlp>=2024.4.9
+
+# Bring-your-own-LLM (optional providers; install only what you use)
+openai>=1.30
+# anthropic>=0.25   # uncomment for LLM_PROVIDER=anthropic

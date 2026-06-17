@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MomentSearch</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #141821; --line: #232838; --text: #e6e9f0;
+    --muted: #8b93a7; --accent: #5b8cff; --accent-2: #3ad6a0; --warn: #f0b429;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header { padding: 22px 24px; border-bottom: 1px solid var(--line); display: flex;
+           align-items: baseline; gap: 12px; }
+  header h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .badge { margin-left: auto; font-size: 12px; padding: 4px 10px; border-radius: 999px;
+           border: 1px solid var(--line); color: var(--muted); }
+  .badge.ok { color: var(--accent-2); border-color: #1f4d3d; }
+  .badge.warn { color: var(--warn); border-color: #4d3f17; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .panel h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em;
+              color: var(--muted); margin: 0 0 14px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  input[type=text], input[type=search], select {
+    flex: 1; min-width: 180px; background: #0e1117; border: 1px solid var(--line);
+    color: var(--text); padding: 11px 13px; border-radius: 9px; font-size: 14px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  button {
+    background: var(--accent); color: #fff; border: 0; padding: 11px 18px; border-radius: 9px;
+    font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  button.secondary { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .tab { padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px;
+         border: 1px solid var(--line); color: var(--muted); }
+  .tab.active { color: var(--text); border-color: var(--accent); }
+  .status { font-size: 13px; color: var(--muted); margin-top: 12px; min-height: 18px; }
+  .status.err { color: #ff7a7a; }
+  .videos { display: flex; flex-direction: column; gap: 8px; }
+  .vid { display: flex; align-items: center; gap: 10px; font-size: 13.5px;
+         padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+  .vid .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vid .c { color: var(--muted); font-size: 12px; }
+  .vid .x { color: var(--muted); cursor: pointer; border: 0; background: none; padding: 4px 8px; }
+  .answer { background: #0e1117; border: 1px solid var(--line); border-radius: 10px;
+            padding: 16px; margin-bottom: 16px; white-space: pre-wrap; }
+  .answer sup { color: var(--accent); font-weight: 700; }
+  .cites { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .cite { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #0e1117; }
+  .cite img { width: 100%; height: 120px; object-fit: cover; display: block; background: #000; }
+  .cite .meta { padding: 8px 10px; font-size: 12.5px; }
+  .cite .meta .n { color: var(--accent); font-weight: 700; }
+  .cite .meta .ts { color: var(--accent-2); }
+  .cite .meta a { color: var(--text); text-decoration: none; }
+  .cite .meta .ttl { color: var(--muted); display: block; margin-top: 2px;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>MomentSearch</h1>
+  <span class="sub">visual video search · ask questions, get cited moments</span>
+  <span id="llmBadge" class="badge">checking…</span>
+</header>
+
+<main>
+  <!-- Add a video -->
+  <section class="panel">
+    <h2>Add a video</h2>
+    <div class="tabs">
+      <div class="tab active" data-tab="yt">YouTube URL</div>
+      <div class="tab" data-tab="up">Upload file</div>
+    </div>
+    <div id="tab-yt" class="row">
+      <input type="text" id="ytUrl" placeholder="https://youtube.com/watch?v=…" />
+      <button id="ytBtn">Ingest</button>
+    </div>
+    <div id="tab-up" class="row" style="display:none">
+      <input type="file" id="upFile" accept="video/*" />
+      <button id="upBtn">Upload &amp; ingest</button>
+    </div>
+    <div id="ingestStatus" class="status"></div>
+    <p class="hint">MomentSearch samples frames and understands the <b>picture</b> — it never
+      transcribes audio. First ingest downloads the CLIP model (~hundreds of MB).</p>
+  </section>
+
+  <!-- Library -->
+  <section class="panel">
+    <h2>Indexed videos</h2>
+    <div id="videos" class="videos"><span class="hint">None yet.</span></div>
+  </section>
+
+  <!-- Ask -->
+  <section class="panel">
+    <h2>Ask</h2>
+    <div class="row">
+      <input type="search" id="q" placeholder="What is shown on screen? e.g. 'a person writing on a whiteboard'" />
+      <select id="scope"><option value="">All videos</option></select>
+      <button id="askBtn">Ask</button>
+    </div>
+    <div id="askStatus" class="status"></div>
+    <div id="results" style="margin-top:16px"></div>
+  </section>
+</main>
+
+<footer>Open source · Apache 2.0 ·
+  <a href="https://momentsearch.vercel.app/">momentsearch.vercel.app</a> ·
+  <a href="https://github.com/traversaal-ai/momentsearch">traversaal-ai/momentsearch</a></footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => (s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+// Tabs
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  $("tab-yt").style.display = t.dataset.tab === "yt" ? "flex" : "none";
+  $("tab-up").style.display = t.dataset.tab === "up" ? "flex" : "none";
+});
+
+async function loadConfig() {
+  try {
+    const c = await (await fetch("/api/config")).json();
+    const b = $("llmBadge");
+    if (c.llm_configured) { b.textContent = "LLM: " + (c.llm_model || c.llm_provider); b.className = "badge ok"; }
+    else { b.textContent = "No LLM — frames only"; b.className = "badge warn"; }
+  } catch { $("llmBadge").textContent = "API offline"; }
+}
+
+async function loadVideos() {
+  const { videos } = await (await fetch("/api/videos")).json();
+  const box = $("videos"), scope = $("scope");
+  scope.innerHTML = '<option value="">All videos</option>';
+  if (!videos.length) { box.innerHTML = '<span class="hint">None yet.</span>'; return; }
+  box.innerHTML = "";
+  for (const v of videos) {
+    const row = document.createElement("div");
+    row.className = "vid";
+    row.innerHTML = `<span class="t">${esc(v.title)}</span>
+      <span class="c">${v.frames} frames · ${esc(v.source||"")}</span>
+      <button class="x" title="Remove">✕</button>`;
+    row.querySelector(".x").onclick = async () => {
+      await fetch("/api/videos/" + encodeURIComponent(v.video_id), { method: "DELETE" });
+      loadVideos();
+    };
+    box.appendChild(row);
+    scope.insertAdjacentHTML("beforeend",
+      `<option value="${esc(v.video_id)}">${esc(v.title)}</option>`);
+  }
+}
+
+// Ingestion via SSE
+function runIngest(url, statusEl, doneBtns) {
+  const es = new EventSource(url);
+  doneBtns.forEach(b => b.disabled = true);
+  es.onmessage = (e) => {
+    const { stage, detail } = JSON.parse(e.data);
+    if (stage === "error") { statusEl.textContent = "Error: " + detail.message; statusEl.className = "status err"; es.close(); doneBtns.forEach(b=>b.disabled=false); }
+    else if (stage === "complete") {
+      statusEl.textContent = `Done — indexed ${detail.frames} frames from “${detail.title}”.`;
+      statusEl.className = "status"; es.close(); doneBtns.forEach(b=>b.disabled=false); loadVideos();
+    } else {
+      statusEl.textContent = (detail && detail.message) ? detail.message : stage + "…";
+      statusEl.className = "status";
+    }
+  };
+  es.onerror = () => { statusEl.textContent = "Connection lost."; statusEl.className = "status err"; es.close(); doneBtns.forEach(b=>b.disabled=false); };
+}
+
+$("ytBtn").onclick = () => {
+  const url = $("ytUrl").value.trim();
+  if (!url) return;
+  runIngest("/api/ingest/youtube?url=" + encodeURIComponent(url), $("ingestStatus"), [$("ytBtn")]);
+};
+
+$("upBtn").onclick = async () => {
+  const f = $("upFile").files[0];
+  if (!f) return;
+  const st = $("ingestStatus");
+  st.textContent = "Uploading…"; st.className = "status"; $("upBtn").disabled = true;
+  const fd = new FormData(); fd.append("file", f);
+  const r = await (await fetch("/api/upload", { method: "POST", body: fd })).json();
+  runIngest(`/api/ingest/upload?video_id=${encodeURIComponent(r.video_id)}&title=${encodeURIComponent(r.title)}`,
+            st, [$("upBtn")]);
+};
+
+// Ask
+function renderAnswer(text) {
+  // turn [n] into superscript markers
+  return esc(text).replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, '<sup>[$1]</sup>');
+}
+
+$("askBtn").onclick = async () => {
+  const q = $("q").value.trim();
+  if (!q) return;
+  const st = $("askStatus"), res = $("results");
+  st.textContent = "Searching frames…"; st.className = "status"; res.innerHTML = ""; $("askBtn").disabled = true;
+  try {
+    const r = await (await fetch("/api/ask", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, video_id: $("scope").value || null })
+    })).json();
+    st.textContent = "";
+    let html = "";
+    if (r.answer) html += `<div class="answer">${renderAnswer(r.answer)}</div>`;
+    else if (r.note) html += `<div class="answer" style="color:var(--muted)">${esc(r.note)}</div>`;
+    if (r.citations && r.citations.length) {
+      html += '<div class="cites">';
+      for (const c of r.citations) {
+        const link = c.deeplink || "#";
+        html += `<div class="cite">
+          <a href="${esc(link)}" target="_blank"><img src="${esc(c.thumbnail)}" loading="lazy" /></a>
+          <div class="meta">
+            <span class="n">[${c.n}]</span> <span class="ts">${esc(c.timestamp)}</span>
+            &nbsp;·&nbsp;score ${c.score}
+            <a class="ttl" href="${esc(link)}" target="_blank">${esc(c.title || c.video_id)}</a>
+          </div></div>`;
+      }
+      html += "</div>";
+    } else if (!r.answer) {
+      html = '<span class="hint">No matching moments. Ingest a video first.</span>';
+    }
+    res.innerHTML = html;
+  } catch (e) {
+    st.textContent = "Error: " + e.message; st.className = "status err";
+  } finally { $("askBtn").disabled = false; }
+};
+$("q").addEventListener("keydown", e => { if (e.key === "Enter") $("askBtn").click(); });
+
+loadConfig(); loadVideos();
+</script>
+</body>
+</html>

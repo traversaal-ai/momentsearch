@@ -1,0 +1,12 @@
+MomentSearch
+Copyright 2026 Traversaal.ai
+
+This product includes software developed at Traversaal.ai (https://traversaal.ai).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+This project depends on third-party open-source software, including but not
+limited to: FastAPI, Qdrant, sentence-transformers / OpenCLIP, PyTorch,
+yt-dlp, and FFmpeg. Each is distributed under its own license. MomentSearch
+does not bundle model weights; CLIP weights are downloaded at runtime from
+their respective sources under their respective licenses.
