@@ -49,29 +49,28 @@
   </div>
 </header>
 
-<!-- HERO / ASK -->
-<section class="max-w-6xl mx-auto px-6 pt-12 pb-6">
-  <div id="heroBadge" class="inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-5">
-    ● Answers grounded in what's <em>seen</em> on screen — never audio
+<!-- HERO / ASK (Perplexity-style centered search) -->
+<section class="max-w-2xl mx-auto px-6 pt-20 pb-6 text-center">
+  <div id="heroBadge" class="inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-6">
+    ● Sample project · four LLM talks, pre-indexed
   </div>
-  <h1 id="heroTitle" class="display text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.03] tracking-tight max-w-3xl">
-    Ask your videos <span class="text-coral">anything</span> you can see.
+  <h1 id="heroTitle" class="display text-4xl sm:text-5xl font-bold leading-[1.05] tracking-tight">
+    A Deep Dive into <span class="text-coral">LLMs</span>.
   </h1>
-  <p id="heroSub" class="mt-4 text-lg text-muted max-w-xl leading-relaxed">
-    Add a YouTube URL or upload a file. MomentSearch finds the exact moments — and
-    plays each one right beside the answer.
+  <p id="heroSub" class="mt-4 text-[17px] text-muted leading-relaxed mx-auto max-w-lg">
+    Ask anything you can see on screen across these talks. MomentSearch reads the
+    picture — never the audio — and plays the exact moment beside its answer.
   </p>
-  <a id="modeLink" href="/get-started" class="inline-block mt-3 text-sm font-semibold text-coral2 hover:text-coral"></a>
 
-  <div class="mt-7 flex flex-col sm:flex-row gap-3 max-w-3xl items-stretch">
-    <textarea id="q" rows="1" placeholder="e.g. a diagram of the attention mechanism"
-      class="flex-1 bg-white border border-line rounded-xl px-4 py-3 text-[15px] outline-none focus:border-coral focus:ring-4 focus:ring-coral/15 resize-none"></textarea>
-    <select id="scope" class="bg-white border border-line rounded-xl px-3 py-3 text-sm text-ink outline-none focus:border-coral">
-      <option value="">All videos</option>
-    </select>
-    <button id="go" class="bg-coral hover:bg-coral2 text-white font-semibold rounded-xl px-6 py-3.5 transition whitespace-nowrap">Ask →</button>
+  <!-- big centered search bar -->
+  <div class="mt-8 flex items-end gap-2 bg-white border border-line rounded-2xl shadow-sm px-3 py-2.5 text-left focus-within:border-coral focus-within:ring-4 focus-within:ring-coral/15 transition">
+    <textarea id="q" rows="1" placeholder="Ask about anything shown on screen…"
+      class="flex-1 bg-transparent outline-none resize-none text-[16px] leading-relaxed px-2 py-2"></textarea>
+    <button id="go" aria-label="Ask"
+      class="shrink-0 w-10 h-10 rounded-xl bg-coral hover:bg-coral2 text-white text-lg flex items-center justify-center transition">→</button>
   </div>
-  <div id="examples" class="mt-4 flex flex-wrap gap-2"></div>
+  <div id="examples" class="mt-5 flex flex-wrap gap-2 justify-center"></div>
+  <a id="modeLink" href="/get-started" class="inline-block mt-6 text-sm font-semibold text-coral2 hover:text-coral"></a>
 </section>
 
 <main class="max-w-6xl mx-auto px-6 pb-16">
@@ -191,8 +190,7 @@ async function loadConfig(){
 }
 async function loadVideos(){
   const {videos}=await (await fetch("/api/videos")).json();
-  const box=$("#videos"), scope=$("#scope");
-  scope.innerHTML='<option value="">All videos</option>';
+  const box=$("#videos");
   if(!videos.length){
     box.innerHTML = MODE==="full"
       ? '<span class="text-muted text-sm">No videos yet — add one above.</span>'
@@ -203,7 +201,6 @@ async function loadVideos(){
   box.innerHTML=videos.map(v=>`<span class="chip" style="cursor:default">${esc(v.title)} <span class="text-muted">· ${v.frames}f</span>${
     del?`<button class="ml-1 text-muted hover:text-coral2" data-del="${esc(v.video_id)}" title="Remove">✕</button>`:""}</span>`).join("");
   if(del) box.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{ await fetch("/api/videos/"+encodeURIComponent(b.dataset.del),{method:"DELETE"}); loadVideos(); });
-  scope.insertAdjacentHTML("beforeend", videos.map(v=>`<option value="${esc(v.video_id)}">${esc(v.title)}</option>`).join(""));
 }
 
 /* tabs */
@@ -243,7 +240,7 @@ $("#go").onclick=async()=>{
   $("#sources").innerHTML=""; $("#go").disabled=true; $("#go").textContent="…";
   try{
     const r=await (await fetch("/api/ask",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({question:q, video_id:$("#scope").value||null})})).json();
+      body:JSON.stringify({question:q, video_id:null})})).json();
     CITES=r.citations||[];
     let html="";
     if(r.answer) html+=`<div class="prose-body fade-in">${renderMarkdown(r.answer)}</div>`;
@@ -252,7 +249,7 @@ $("#go").onclick=async()=>{
     $("#article").innerHTML=html;
     renderSources();
   }catch(e){ $("#article").innerHTML=`<p class="text-coral2">Error: ${esc(e.message)}</p>`; }
-  finally{ $("#go").disabled=false; $("#go").textContent="Ask →"; }
+  finally{ $("#go").disabled=false; $("#go").textContent="→"; }
 };
 
 function renderSources(){
