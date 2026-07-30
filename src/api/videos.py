@@ -2,7 +2,7 @@
 
 Upload flow (gigabytes never touch this process):
   1. POST /api/videos/presign   -> scoped, time-limited PUT URL (server picks
-                                   the key: uploads/{user}/{id}.{ext})
+                                   the key: {user}/{id}/source.{ext})
   2. browser PUTs the file straight to object storage
   3. POST /api/videos           -> HEAD-verify the object, insert a pending
                                    Postgres row, schedule a Prefect run, 202
@@ -30,7 +30,6 @@ from ..config import (
     ALLOWED_UPLOAD_TYPES,
     DEFAULT_USER_ID,
     MAX_UPLOAD_MB,
-    UPLOAD_KEY_PREFIX,
 )
 from ..rag import vector_store
 
@@ -81,10 +80,23 @@ def user_id(x_user_id: str | None = Header(default=None),
 
 # ── Presign ───────────────────────────────────────────────────────────────────
 
+def purge_video(video_id: str, uid: str) -> None:
+    """Erase a video everywhere — Qdrant vectors + GCP (frames, transcript, raw
+    upload) + the manifest row. The caller is responsible for the ownership /
+    sample checks; this just does the wipe (used by DELETE and by the
+    reference-counted session cleanup in sessions.py)."""
+    vector_store.delete_video(uid, video_id)
+    # One prefix wipe removes the whole video footprint — frames, source upload
+    # and transcript all live under `<user>/<video>/`.
+    storage.delete_prefix(storage.video_prefix(uid, video_id))
+    db.delete_video(video_id)
+
+
 class PresignRequest(BaseModel):
     filename: str
     content_type: str
     size: int
+    sha256: str | None = None   # optional: lets an identical re-upload skip the upload entirely
 
 
 @router.post("/presign", dependencies=[Depends(require_auth)])
@@ -93,6 +105,14 @@ def presign(req: PresignRequest, uid: str = Depends(user_id)):
         raise HTTPException(413, f"File exceeds the {MAX_UPLOAD_MB}MB limit.")
     if not any(req.content_type.startswith(t) for t in ALLOWED_UPLOAD_TYPES):
         raise HTTPException(415, "Only video uploads are accepted.")
+    # Fast path: the browser hashed the file and we already have that exact
+    # content indexed. Skip the upload AND the re-embed — the caller just links
+    # the existing video into its session (seconds, no bytes transferred). Its
+    # frames/vectors/transcript are already in Qdrant + GCP under the original.
+    if req.sha256:
+        dup = db.find_duplicate(uid, req.sha256.strip().lower(), exclude_id="")
+        if dup:
+            return {"mode": "exists", "video_id": dup["id"], "title": dup.get("title")}
     ext = Path(req.filename or "video.mp4").suffix.lower() or ".mp4"
     if not _EXT_RE.match(ext):
         ext = ".mp4"
@@ -113,7 +133,7 @@ async def upload_direct(video_id: str, key: str, request: Request,
     """Dev-only direct upload (STORAGE_PROVIDER=local can't presign)."""
     if storage.presign_capable():
         raise HTTPException(400, "Use the presigned URL to upload.")
-    if not key.startswith(f"{UPLOAD_KEY_PREFIX}{uid}/{video_id}"):
+    if not key.startswith(storage.video_prefix(uid, video_id)):
         raise HTTPException(403, "Key does not belong to this upload.")
     dest = storage.local_path(key)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -146,12 +166,21 @@ def register(req: RegisterRequest, uid: str = Depends(user_id)):
         if not m:
             raise HTTPException(400, "Not a recognizable YouTube URL.")
         video_id = f"yt_{m.group(1)}"
+        # Already indexed for this user (or a shared sample)? Re-adding it — e.g.
+        # after deleting its session — should just re-link the working copy, not
+        # re-ingest it or clobber the shared sample row via upsert.
+        existing = db.get_video(video_id)
+        if existing and existing["status"] == "indexed" and (
+                existing["user_id"] == uid or is_sample(video_id)):
+            if req.session_id and db.get_session(req.session_id, uid):
+                db.add_session_video(req.session_id, video_id)
+            return {"video_id": video_id, "status": "indexed", "deduped": True}
         row = db.upsert_pending({"id": video_id, "user_id": uid, "source": "youtube",
                                  "url": req.url, "storage_key": None,
                                  "source_hash": video_id, "title": req.title})
     elif req.video_id and req.key:
         # Never trust the client's key: it must be the one WE minted for them.
-        if not req.key.startswith(f"{UPLOAD_KEY_PREFIX}{uid}/{req.video_id}"):
+        if not req.key.startswith(storage.video_prefix(uid, req.video_id)):
             raise HTTPException(403, "Key does not belong to this user/upload.")
         meta = storage.head(req.key)
         if meta is None:
@@ -234,10 +263,5 @@ def delete(video_id: str, uid: str = Depends(user_id)):
     row = db.get_video(video_id)
     if row is None or row["user_id"] != uid:
         raise HTTPException(404, "Video not found.")
-    vector_store.delete_video(uid, video_id)
-    storage.delete_prefix(storage.frame_prefix(uid, video_id))
-    storage.delete_key(storage.transcript_key(uid, video_id))  # durable transcript copy (idempotent)
-    if row.get("storage_key"):
-        storage.delete_key(row["storage_key"])
-    db.delete_video(video_id)
+    purge_video(video_id, uid)
     return {"ok": True, "video_id": video_id}

@@ -100,6 +100,46 @@ def _media_url(video: dict | None, user_id: str, video_id: str) -> str | None:
     return f"/api/video/{video_id}?u={user_id}"
 
 
+def _rerank(question: str, windows: list[dict]) -> list[dict]:
+    """Cross-encoder rerank of the text-bearing moments — RRF is rank-blind, this
+    restores real relevance (src/rag/rerank.py).
+
+    Judges each (question, transcript) pair, squashes the score to 0-1, and blends
+    it with the moment's NORMALIZED RRF standing (RERANK_WEIGHT): truly relevant
+    text moments rise, spurious ones sink. Frame-only moments carry no transcript,
+    so they keep their RRF standing untouched — visual results aren't disturbed.
+    Each judged/kept window gets a `blend` score (0-1, what the list is sorted by);
+    unreranked runs leave it unset and the citation falls back to the raw rrf.
+    Best-effort: any reranker failure logs and returns the order unchanged."""
+    if not config.ENABLE_RERANK or len(windows) < 2:
+        return windows
+    import math
+
+    from . import rerank as reranker
+    cand = [i for i, w in enumerate(windows) if (w.get("text") or {}).get("text")]
+    cand = cand[:config.RERANK_TOP_K]
+    if len(cand) < 2:
+        return windows
+    try:
+        raw = reranker.score(question, [windows[i]["text"]["text"] for i in cand])
+    except Exception as exc:
+        print(f"[rerank] skipped ({type(exc).__name__}: {exc})")
+        return windows
+
+    max_rrf = max((w["rrf"] for w in windows), default=0.0) or 1.0
+    wt = config.RERANK_WEIGHT
+    rel = {i: 1.0 / (1.0 + math.exp(-s)) for i, s in zip(cand, raw)}
+    for i, w in enumerate(windows):
+        rr = w["rrf"] / max_rrf
+        if i in rel:
+            w["rerank"] = round(rel[i], 4)
+            w["blend"] = wt * rel[i] + (1.0 - wt) * rr
+        else:
+            w["blend"] = rr            # frame-only / unjudged: keep RRF standing
+    windows.sort(key=lambda w: w["blend"], reverse=True)
+    return windows
+
+
 def retrieve(question: str, user_id: str, *, top_k: int | None = None,
              video_id: str | None = None,
              video_ids: list[str] | None = None,
@@ -129,8 +169,24 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
                                          include_samples=include_samples)
         best_text = thits[0]["score"] if thits else 0.0
 
-    windows = _fuse(vhits, thits)[:k]
+    windows = _rerank(question, _fuse(vhits, thits))[:k]
     videos = db.videos_by_ids(sorted({w["video_id"] for w in windows}))
+
+    # A text-only moment has no matched frame; borrow the video's picture nearest
+    # its timestamp so the card isn't an empty "(no frame)" box (uploads have no
+    # YouTube thumbnail to fall back on). One frame-list scroll per video, cached.
+    _frames: dict[tuple[str, str], list[tuple[int, int]]] = {}
+
+    def _preview(owner: str, vid: str, ms: int) -> str | None:
+        key = (owner, vid)
+        if key not in _frames:
+            _frames[key] = vector_store.frame_times(owner, vid)
+        fts = _frames[key]
+        if not fts:
+            return None
+        idx = min(fts, key=lambda t: abs(t[1] - ms))[0]
+        return _thumb_url(owner, vid, idx)
+
     citations = []
     for i, w in enumerate(windows, 1):
         vid = w["video_id"]
@@ -154,9 +210,12 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
             "timestamp": _seconds(ms),
             "idx": idx,
             "thumbnail": _thumb_url(owner, vid, idx) if idx is not None else None,
+            # Non-matched still shown for a text-only moment (kept separate from
+            # `thumbnail` so the UI still labels it "Matched on transcript").
+            "preview": None if idx is not None else _preview(owner, vid, ms),
             "media_url": _media_url(meta, owner, vid),
             "deeplink": _deeplink(meta, vid, ms),
-            "score": round(w["rrf"], 4),
+            "score": round(w.get("blend", w["rrf"]), 4),
             "transcript": (tx or {}).get("text"),
             "modalities": sorted(w["modalities"]),
         })

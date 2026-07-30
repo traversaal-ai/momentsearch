@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS ms_videos (
     user_id      TEXT NOT NULL,
     source       TEXT NOT NULL,              -- youtube | upload
     url          TEXT,                       -- YouTube URL (source=youtube)
-    storage_key  TEXT,                       -- uploads/<user>/<id>.<ext> (source=upload)
+    storage_key  TEXT,                       -- {user}/{id}/source.{ext} (source=upload)
     source_hash  TEXT,                       -- sha256 of the file / yt video id
     title        TEXT,
     status       TEXT NOT NULL DEFAULT 'pending',
@@ -204,6 +204,35 @@ def find_duplicate(user_id: str, source_hash: str, exclude_id: str) -> dict | No
             """,
             (user_id, source_hash, exclude_id),
         ).fetchone()
+
+
+def count_video_sessions(video_id: str) -> int:
+    """How many sessions still point at this video. Reference count for the
+    delete-session cleanup: a video is purged only when this hits zero."""
+    with pool().connection() as conn:
+        row = conn.execute(
+            "SELECT count(*) AS n FROM ms_session_videos WHERE video_id = %s",
+            (video_id,)).fetchone()
+    return int(row["n"]) if row else 0
+
+
+def resolve_duplicate(stub_id: str, original_id: str) -> None:
+    """A re-added video turned out to duplicate content the user already has
+    indexed (`original_id`). Move the redundant stub's session memberships onto
+    the original, then delete the stub — so the user ends up with the WORKING
+    video in their session(s) instead of a dead 'duplicate' card. The stub's
+    ms_session_videos rows go with it via ON DELETE CASCADE."""
+    with pool().connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO ms_session_videos (session_id, video_id)
+            SELECT session_id, %s FROM ms_session_videos WHERE video_id = %s
+            ON CONFLICT DO NOTHING
+            """,
+            (original_id, stub_id),
+        )
+        conn.execute("DELETE FROM ms_videos WHERE id = %s AND status = 'skipped'",
+                     (stub_id,))
 
 
 def list_videos(user_id: str, status: str | None = None,

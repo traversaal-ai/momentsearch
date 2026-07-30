@@ -127,7 +127,7 @@ $("#renameSession").onclick=async()=>{
 
 $("#deleteSession").onclick=async()=>{
   if(!CUR) return;
-  if(!confirm(`Delete “${CUR.title}”?\n\nIts chat is deleted. The videos themselves stay in your workspace.`)) return;
+  if(!confirm(`Delete “${CUR.title}”?\n\nThis deletes the session, its chat, and its videos — their frames, transcript and search index — unless a video is also in another session, which keeps it.`)) return;
   await apiJSON("/api/sessions/"+encodeURIComponent(CUR.id),{method:"DELETE"});
   CUR=null;
   await loadSessions();
@@ -364,9 +364,21 @@ async function uploadAll(files){
        </div>`);
     const row=$("#"+id);
     try{
+      // Hash small-enough files up front so an identical re-upload skips the
+      // upload AND the re-embed (crypto.subtle needs the whole file in memory).
+      const sha = f.size <= 300*1024*1024 ? await sha256Hex(f) : null;
       const p=await apiJSON("/api/videos/presign",{method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({filename:f.name, content_type:f.type||"video/mp4", size:f.size})});
+        body:JSON.stringify({filename:f.name, content_type:f.type||"video/mp4", size:f.size, sha256:sha})});
+      if(p.mode==="exists"){
+        // identical content already indexed — link the existing video, no upload
+        await apiJSON(`/api/sessions/${encodeURIComponent(CUR.id)}/videos`,{method:"POST",
+          headers:{"Content-Type":"application/json"}, body:JSON.stringify({video_id:p.video_id})});
+        row.remove();
+        $("#ingestStatus").textContent="Already indexed — added instantly.";
+        await openSession(CUR.id); loadSessions(CUR.id);
+        continue;
+      }
       await putWithProgress(p.url, p.headers, f, pct=>{
         row.querySelector("[data-bar]").style.width=Math.round(pct*100)+"%";
         row.querySelector("[data-pct]").textContent=Math.round(pct*100)+"%";

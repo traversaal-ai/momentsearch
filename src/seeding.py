@@ -51,16 +51,28 @@ def wait_for_clip(timeout: int = 600) -> None:
 
 
 def _not_indexed() -> list[dict]:
-    """Samples that still need (re)ingest: never indexed, OR indexed on a
-    DIFFERENT embedding version. EMBED_VERSION is derived from the visual
-    provider + model, so switching either one bumps it and auto-re-seeds all four
-    samples into the new collections — no manual reset needed."""
+    """Samples that still need (re)ingest: never indexed, indexed on a DIFFERENT
+    embedding version, OR indexed but with frames NOT at the current key layout.
+
+    EMBED_VERSION is derived from the visual provider + model, so switching either
+    one bumps it and auto-re-seeds all four samples. The layout probe covers the
+    storage re-key: a row can say 'indexed' while its thumbnails live under the
+    old keys (and would 404), so we re-ingest it onto the new `<user>/<video>/`
+    keys. Cheap HEAD, and it self-heals only the samples that actually moved."""
     out = []
     for v in SAMPLE_VIDEOS:
-        row = db.get_video(sample_video_id(v["url"])) or {}
+        vid = sample_video_id(v["url"])
+        row = db.get_video(vid) or {}
         ev = row.get("embed_version")
         stale = ev is not None and ev != config.EMBED_VERSION
-        if row.get("status") != "indexed" or stale:
+        misplaced = False
+        if row.get("status") == "indexed" and not stale:
+            try:  # frame 0 always exists for an indexed video — probe the new key
+                misplaced = not storage.exists(
+                    storage.frame_key(config.DEFAULT_USER_ID, vid, 0))
+            except Exception:
+                misplaced = False
+        if row.get("status") != "indexed" or stale or misplaced:
             out.append(v)
     return out
 

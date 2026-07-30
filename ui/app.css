@@ -1,8 +1,9 @@
 /* MomentSearch — type, motion and texture: the parts Tailwind can't express.
  *
  * The design tokens (paper / ink / coral / line, Fraunces + Inter) are declared
- * once in index.html's tailwind.config. NOTHING here introduces a colour or a
- * typeface that isn't already in that palette — this file only adds movement.
+ * in each page's <head> (app.html / demo.html / landing.html / signin.html).
+ * NOTHING here introduces a colour or a typeface that isn't already in that
+ * palette — this file only adds movement.
  *
  * Motion budget: entrances are one 60ms cascade, the only looping animations
  * are the caret and in-progress indicators, and every animation collapses

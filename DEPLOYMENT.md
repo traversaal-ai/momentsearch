@@ -43,10 +43,23 @@ work from Fly):
 
 - **Neon Postgres** — `DATABASE_URL`
 - **Prefect Cloud** — `PREFECT_API_URL`, `PREFECT_API_KEY`
-- **Qdrant Cloud** — `QDRANT_URL`, `QDRANT_API_KEY`
+- **Qdrant Cloud** — `QDRANT_URL`, `QDRANT_API_KEY` (two collections are
+  auto-created: `moments_l14` for the CLIP `clip-ViT-L-14` frame vectors and
+  `moments_text_openai` for the `text-embedding-3-small` transcript vectors)
 - **Object storage** — `STORAGE_PROVIDER=gcp_native` + the `GOOGLE_CLOUD_*` keys
-  (bucket `momentsearch-media`)
-- **LLM** — `LLM_API_KEY`
+  (bucket `momentsearch-media`). Everything for one video lives under
+  `{user}/{video}/`: `source.{ext}` (raw upload), `frames/NNNNNN.jpg`
+  (thumbnails) and `transcript.json` (timed transcript)
+- **LLM, text embeddings & ASR** — `OPENAI_API_KEY` (or `LLM_API_KEY`). One
+  OpenAI key now powers **three** jobs by default: the answer model (`gpt-4o`),
+  the transcript embeddings (`text-embedding-3-small`) and upload transcription
+  (Whisper `whisper-1`). Because the default transcript embedder is OpenAI (no
+  longer the keyless fastembed branch), a **real deploy must set this key** —
+  without it the transcript branch can't index. To avoid the OpenAI dependency,
+  set `TEXT_EMBED_PROVIDER=fastembed` for a keyless transcript branch (bge on
+  CPU). The cross-encoder reranker is **on by default** and also keyless (a
+  local fastembed ONNX model, downloaded on the first query); set
+  `ENABLE_RERANK=false` to disable it.
 - A **Fly.io account** + the `flyctl` CLI installed.
 
 > **The sample corpus is already indexed** in your shared Qdrant/Neon from local

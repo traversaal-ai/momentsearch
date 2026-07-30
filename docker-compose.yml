@@ -17,6 +17,7 @@ services:
     env_file: .env
     volumes:
       - ./src:/app/src            # live code — restart clip to pick up changes
+      - ./.env:/app/.env:ro       # so load_dotenv() works in any subprocess (see config.py)
       - hf_cache:/root/.cache     # model weights cached across restarts
     restart: unless-stopped
 
@@ -34,6 +35,7 @@ services:
       CLIP_SERVICE_URL: ${CLIP_SERVICE_URL:-http://clip:8001}
     volumes:
       - ./src:/app/src            # live code — re-runs current seed logic on each `up`
+      - ./.env:/app/.env:ro       # so load_dotenv() works in any subprocess (see config.py)
       - ./data:/app/data
       - hf_cache:/root/.cache
     depends_on:
@@ -51,7 +53,8 @@ services:
       CLIP_SERVICE_URL: ${CLIP_SERVICE_URL:-http://clip:8001}
     volumes:
       - ./src:/app/src            # live code — no rebuild for Python changes
-      - ./ui:/app/ui              # live UI — edit app.js/app.css/index.html, just refresh
+      - ./ui:/app/ui              # live UI — edit the HTML/JS/CSS in ui/, just refresh
+      - ./.env:/app/.env:ro       # so load_dotenv() works in any subprocess (see config.py)
       - ./data:/app/data          # STORAGE_PROVIDER=local only (dev)
       - hf_cache:/root/.cache
     depends_on:
@@ -73,6 +76,7 @@ services:
       WORKER_CONCURRENCY: 2
     volumes:
       - ./src:/app/src            # live code — restart the worker to pick up changes
+      - ./.env:/app/.env:ro       # so load_dotenv() works in the Prefect flow subprocess (see config.py)
       - ./data:/app/data
       - hf_cache:/root/.cache
     depends_on:

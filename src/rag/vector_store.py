@@ -269,6 +269,30 @@ def fetch_chunks(user_id: str, video_id: str) -> list[dict[str, Any]]:
     return out
 
 
+def frame_times(user_id: str, video_id: str) -> list[tuple[int, int]]:
+    """[(idx, ms)] for every stored frame of a video — so a text-only ('said')
+    moment can borrow the picture nearest its timestamp instead of showing an
+    empty box (uploads have no YouTube thumbnail to fall back on). Empty if the
+    video has no frames."""
+    try:
+        points, _ = client().scroll(
+            collection_name=QDRANT_COLLECTION,
+            scroll_filter=qm.Filter(must=[
+                qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id)),
+                qm.FieldCondition(key="video_id", match=qm.MatchValue(value=video_id)),
+            ]),
+            with_payload=["idx", "ms"], with_vectors=False, limit=10000,
+        )
+    except Exception:
+        return []
+    out = []
+    for p in points:
+        pay = p.payload or {}
+        if "idx" in pay:
+            out.append((int(pay["idx"]), int(pay.get("ms", 0))))
+    return out
+
+
 def delete_video(user_id: str, video_id: str) -> None:
     """Purge a video from BOTH branches (frames + transcript)."""
     sel = qm.FilterSelector(filter=_user_filter(user_id, video_id))

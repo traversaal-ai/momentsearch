@@ -193,7 +193,7 @@ def ask(req: AskRequest, uid: str = Depends(user_id_dep)):
 def transcript(video_id: str, uid: str = Depends(user_id_dep)):
     """The full timed transcript `[{text, t_start, t_end}]` for the synced
     transcript panel — served straight from the durable copy in object storage
-    (`transcripts/<owner>/<id>.json`). GCP-only: 404 when the video has no stored
+    (`{owner}/{video_id}/transcript.json`). GCP-only: 404 when the video has no stored
     transcript (an upload, a caption-less video, or a sample not yet re-seeded)."""
     import json
 
@@ -222,7 +222,7 @@ def frame(video_id: str, name: str, u: str | None = None):
         raise HTTPException(404, "Thumbnails are served from object storage.")
     if not _FRAME_RE.match(name):
         raise HTTPException(404, "Frame not found.")
-    fp = storage.local_path(f"{config.FRAME_KEY_PREFIX}{_uid(u)}/{video_id}/{name}")
+    fp = storage.local_path(storage.frame_prefix(_uid(u), video_id) + name)
     if not fp.exists():
         raise HTTPException(404, "Frame not found.")
     return FileResponse(fp, media_type="image/jpeg",

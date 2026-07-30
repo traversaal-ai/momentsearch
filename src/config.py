@@ -19,9 +19,16 @@ from dotenv import load_dotenv
 
 from .providers import registry  # pure data — no import cycle
 
-load_dotenv()
+# Load .env from the REPO ROOT by absolute path, not the cwd. This matters for
+# ingest: Prefect runs each flow in a subprocess with a stripped environment, so
+# without this it would see none of the compose env vars, fall back to every
+# config DEFAULT (clip-ViT-B-32 + the `moments` collection + in-process
+# embedding), and silently index videos into a collection the app never queries.
+# override=False keeps real env vars (compose/Fly secrets) winning where present.
+_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(_ROOT / ".env", override=False)
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = _ROOT
 DATA = ROOT / "data"  # local-provider storage root (dev only)
 
 
@@ -125,11 +132,12 @@ def gcs_service_account_info() -> dict:
     }
 
 
-# Bucket key layout — every key is user-scoped (tenant isolation at the path level):
-#   uploads/{user_id}/{video_id}.{ext}      raw uploaded video (presigned PUT target)
-#   frames/{user_id}/{video_id}/NNNNNN.jpg  downscaled frame thumbnails (citations)
-UPLOAD_KEY_PREFIX = "uploads/"
-FRAME_KEY_PREFIX = "frames/"
+# Bucket key layout — everything for one video lives under `{user_id}/{video_id}/`
+# (tenant isolation at the path level; one prefix delete wipes a whole video, and
+# `{user_id}/` wipes a whole user). The keys are built in src/storage.py:
+#   {user_id}/{video_id}/source.{ext}       raw uploaded video (presigned PUT target)
+#   {user_id}/{video_id}/frames/NNNNNN.jpg  downscaled frame thumbnails (citations)
+#   {user_id}/{video_id}/transcript.json    durable timed transcript
 
 # --- Presigned uploads (browser -> bucket, bypassing the API) -----------------
 PRESIGN_EXPIRY_S = _int("PRESIGN_EXPIRY_S", 900)          # presigned PUT lifetime
@@ -189,7 +197,7 @@ DEDUP_MAX_DISTANCE = _int("DEDUP_MAX_DISTANCE", 4)  # Hamming distance on 64-bit
 IMAGE_EMBED_PROVIDER = registry.image_embed_key(
     os.getenv("IMAGE_EMBED_PROVIDER", "").strip() or "clip")
 _IMG = registry.IMAGE_EMBED_PRESETS[IMAGE_EMBED_PROVIDER]
-CLIP_MODEL = os.getenv("CLIP_MODEL", "clip-ViT-B-32").strip()   # legacy alias
+CLIP_MODEL = os.getenv("CLIP_MODEL", "clip-ViT-L-14").strip()   # legacy alias
 IMAGE_EMBED_MODEL = (os.getenv("IMAGE_EMBED_MODEL", "").strip()
                      or (CLIP_MODEL if IMAGE_EMBED_PROVIDER == "clip"
                          else _IMG.default_model))
@@ -232,18 +240,19 @@ EMBED_VERSION = os.getenv(
 # fastembed — CPU, free), in a separate Qdrant collection. At query time both
 # branches run and fuse by RANK (RRF) — CLIP scores (~0.3) and text scores
 # (~0.7) live on different scales, so raw-score comparison is meaningless.
-# Uploaded files have no captions, so this is YouTube-only; a video with no
-# captions just indexes visually (the branch is skipped, never fatal).
+# The transcript branch: YouTube uses captions; uploads use Whisper ASR from
+# their own audio (see ASR_* below and src/ingest/asr.py). A caption-less
+# YouTube video just indexes visually — never fatal.
 ENABLE_TRANSCRIPT = _envbool("ENABLE_TRANSCRIPT", True)
-TEXT_COLLECTION = os.getenv("TEXT_COLLECTION", "moments_text")
+TEXT_COLLECTION = os.getenv("TEXT_COLLECTION", "moments_text_openai")
 # Transcript-branch embedding PROVIDER (registry.TEXT_EMBED_PRESETS) — the
 # provider name alone picks the model, the dimension and the key env var:
-#   fastembed (default) -> bge via fastembed: CPU, free, NO API key (keeps search
-#                          working keyless for a fresh cloner). Dim 384.
-#   openai              -> OpenAI or any OpenAI-compatible embeddings server
-#                          (vLLM/TEI/Together via TEXT_EMBED_BASE_URL). Falls
-#                          back to LLM_API_KEY so ONE OpenAI key powers both the
-#                          answer and the embeddings. Dim 1536.
+#   openai (default)    -> OpenAI text-embedding-3-small (dim 1536). Falls back to
+#                          LLM_API_KEY so ONE OpenAI key powers the answer AND the
+#                          embeddings. Also any OpenAI-compatible embeddings server
+#                          (vLLM/TEI/Together via TEXT_EMBED_BASE_URL).
+#   fastembed           -> bge via fastembed: CPU, free, NO API key — set this to
+#                          run the transcript branch keyless. Dim 384.
 #   gemini              -> gemini-embedding-2, the same unified space the visual
 #                          branch can use. Dim 1536.
 #   cohere / voyage / jina -> hosted text embeddings, dims 1536 / 1024 / 1024.
@@ -251,7 +260,7 @@ TEXT_COLLECTION = os.getenv("TEXT_COLLECTION", "moments_text")
 # means RE-INDEXING the transcript collection (its vector dim changes). The two
 # branches fuse by RANK (RRF), so this model is fully independent of the visual one.
 TEXT_EMBED_PROVIDER = registry.text_embed_key(
-    os.getenv("TEXT_EMBED_PROVIDER", "").strip() or "fastembed")
+    os.getenv("TEXT_EMBED_PROVIDER", "").strip() or "openai")
 _TXT = registry.TEXT_EMBED_PRESETS[TEXT_EMBED_PROVIDER]
 TEXT_EMBED_MODEL = os.getenv("TEXT_EMBED_MODEL", "").strip() or _TXT.default_model
 TEXT_EMBED_DIM = _int("TEXT_EMBED_DIM", registry.preset_dim(_TXT, TEXT_EMBED_MODEL))
@@ -302,6 +311,29 @@ FUSION_WINDOW_S = _float("FUSION_WINDOW_S", 15.0)
 CROSS_MODAL_BOOST = _float("CROSS_MODAL_BOOST", 1.5)
 # Per-branch candidates fetched before fusion.
 BRANCH_TOP_K = _int("BRANCH_TOP_K", 20)
+
+# --- Reranker (cross-encoder) — the fix for RRF's rank-blindness ----------------
+# RRF orders by branch RANK and discards how relevant a hit actually is, so a
+# spurious top-1 in one branch can outrank the real answer sitting one rank lower
+# in another. A cross-encoder RE-READS each (question, transcript) pair and
+# returns a true relevance score, which search.py blends with the RRF standing to
+# reorder the text-bearing moments. TEXT ONLY for now: frame-only moments have no
+# transcript to judge, so they keep their RRF standing untouched (captioning
+# frames with a VLM would let the same reranker cover them too — a follow-up).
+#   fastembed (default) -> local ONNX cross-encoder, NO API key, CPU. Reuses the
+#                          fastembed dep already installed for text embeddings.
+#   cohere              -> Cohere Rerank API (RERANK_API_KEY / COHERE_API_KEY).
+# ON by default. The first query after boot downloads a ~90MB model (then warm);
+# set ENABLE_RERANK=false to turn it off and fall back to plain RRF.
+ENABLE_RERANK = _envbool("ENABLE_RERANK", True)
+RERANK_PROVIDER = os.getenv("RERANK_PROVIDER", "fastembed").strip().lower()
+_RERANK_DEFAULT_MODEL = {"fastembed": "Xenova/ms-marco-MiniLM-L-6-v2",
+                         "cohere": "rerank-english-v3.0"}.get(RERANK_PROVIDER, "")
+RERANK_MODEL = os.getenv("RERANK_MODEL", "").strip() or _RERANK_DEFAULT_MODEL
+RERANK_TOP_K = _int("RERANK_TOP_K", 30)        # top text candidates to re-judge
+RERANK_WEIGHT = _float("RERANK_WEIGHT", 0.7)   # blend weight: rerank vs norm. RRF
+RERANK_API_KEY = _first_env("RERANK_API_KEY", "COHERE_API_KEY")
+RERANK_BASE_URL = os.getenv("RERANK_BASE_URL", "").strip()
 
 # --- YouTube download hardening ---------------------------------------------------
 # YouTube increasingly answers yt-dlp's default web client with "Sign in to
@@ -357,7 +389,7 @@ SEED_SAMPLE_VIDEOS = _envbool("SEED_SAMPLE_VIDEOS", True)
 QDRANT_URL = os.getenv("QDRANT_URL", "").strip()
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "").strip() or os.getenv("QDRANT_TOKEN", "").strip()
 QDRANT_LOCAL_PATH = os.getenv("QDRANT_LOCAL_PATH", str(DATA / "qdrant"))
-QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "moments")
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "moments_l14")
 # Low-RAM profile: original vectors on disk, int8-quantized copies pinned in
 # RAM (~4x smaller), HNSW graph on disk; queries rescore against the originals.
 # Frames balloon vector counts fast, so these default ON.

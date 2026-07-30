@@ -1,6 +1,6 @@
 # MomentSearch
 
-**Ask questions about your videos and get answers grounded in the exact moments — by what's _seen_ on screen, and (for YouTube) what's _said_ in the transcript.**
+**Ask questions about your videos and get answers grounded in the exact moments — by what's _seen_ on screen, and what's _said_ in the transcript (YouTube captions, or Whisper on your own uploads).**
 
 🌐 **Live app:** [momentsearch.fly.dev](https://momentsearch.fly.dev/get-started)
 
@@ -14,23 +14,24 @@ there. Every model in that sentence is **pluggable by name** — the answer LLM
 and *both* embedding branches — so you can run it fully local and keyless, fully
 hosted, or any mix.
 
-> **Visual-first, multimodal for YouTube.** The core is *visual* — CLIP over
+> **Visual-first, multimodal.** The core is *visual* — CLIP over
 > sampled frames, so it works on silent footage, screen recordings, sports,
-> b-roll, slides, demos: anything you can *see*. For **YouTube** it adds a
-> **transcript** branch (captions) and fuses the two, so "find where they *talk
-> about* X" works too. **Uploaded files are visual-only for now** — no audio
-> transcription yet (that'd need Whisper).
+> b-roll, slides, demos: anything you can *see*. On top of that it adds a
+> **transcript** branch and fuses the two, so "find where they *talk about* X"
+> works too — **YouTube** uses captions and **uploads** are transcribed by
+> **Whisper ASR** from their own audio. Only a caption-less YouTube video with
+> no usable audio stays visual-only.
 
 - 🎥 **Presigned uploads** — the browser PUTs straight to object storage; gigabytes never flow through the API
 - ⚙️ **Queue + stateless workers** — the API answers `202` instantly; Prefect-orchestrated workers do the heavy lifting
-- 🔍 **Visual retrieval** — CLIP embeddings, runs locally, no API key needed to search
+- 🔍 **Visual retrieval** — CLIP embeddings, runs locally, no API key needed for the visual branch
 - 👥 **Multi-tenant & private** — every bucket key, Postgres row and Qdrant point is `user_id`-tagged and filtered
 - 🛡️ **Confidence gate** — below-threshold retrievals abstain *before* the LLM is ever called
 - 💬 **Cited answers** — bring your own vision LLM: **Gemini, OpenAI, Claude, Grok, OpenRouter, Groq, Together, Mistral, NVIDIA, Azure, Ollama/vLLM** — a provider name plus a key is the whole configuration ([Pluggable models](#pluggable-models-llms-and-embeddings))
-- 🔌 **Swappable embeddings, both modalities** — frames via local **CLIP** (default, free) or hosted **Jina CLIP v2 / Cohere Embed v4 / Voyage multimodal / Gemini**; transcripts via **bge** (default) or **OpenAI / Gemini / Cohere / Voyage / Jina**. Mix them — the branches fuse by rank, not score
+- 🔌 **Swappable embeddings, both modalities** — frames via local **CLIP** (default `clip-ViT-L-14`, free) or hosted **Jina CLIP v2 / Cohere Embed v4 / Voyage multimodal / Gemini**; transcripts via **OpenAI `text-embedding-3-small`** (default) or **bge/fastembed (local, keyless) / Gemini / Cohere / Voyage / Jina**. Mix them — the branches fuse by rank, not score
 - 🩺 **`python -m src.providers`** — one command tells you what your `.env` resolved to, which key it used, and what's missing
 - 🏠 **Per-user models** — each tenant can plug in a model *they* host (vLLM, Ollama, any OpenAI-compatible endpoint) and their answers run on it
-- 🧩 **Multimodal fusion** — for YouTube, a transcript branch runs alongside the visual one and a **rank-based scoring module** (RRF + time-windows + cross-modal boost) fuses them; "find where they *talk about* X" works even when the screen doesn't show it
+- 🧩 **Multimodal fusion** — a transcript branch (YouTube captions or Whisper on uploads) runs alongside the visual one and a **rank-based scoring module** (RRF + time-windows + cross-modal boost, then a local cross-encoder **reranker** on by default) fuses them; "find where they *talk about* X" works even when the screen doesn't show it
 - 🔓 **Apache 2.0**
 
 ## Architecture
@@ -62,7 +63,7 @@ flowchart LR
     obj[("Object storage<br/>S3 / GCS / Tigris")]
     pg[("Neon Postgres<br/>manifest · status · hashes")]
     prefect[("Prefect Cloud<br/>queue · retries · dashboard")]
-    qdrant[("Qdrant Cloud<br/>moments + moments_text")]
+    qdrant[("Qdrant Cloud<br/>moments_l14 + moments_text_openai")]
     vlm[("Vision LLM<br/>OpenAI · vLLM · Anthropic")]
   end
 
@@ -157,8 +158,9 @@ python -m src.seed                        # one-shot: index the 4 samples
 ## The write path — upload to searchable vectors
 
 1. **Presign** — `POST /api/videos/presign {filename, content_type, size}`
-   (Bearer auth when `ADMIN_TOKEN` is set). The server picks the key (`uploads/{user}/{id}.mp4` — never
-   trusted from the client), caps size and type, and returns a time-limited
+   (Bearer auth when `ADMIN_TOKEN` is set). The server picks the key
+   (`{user}/{video}/source.{ext}` — everything for a video lives under
+   `{user}/{video}/`; never trusted from the client), caps size and type, and returns a time-limited
    PUT URL. With `STORAGE_PROVIDER=local` it returns a direct-upload URL
    instead (dev fallback).
 2. **Upload** — the browser PUTs the file straight to the bucket.
@@ -174,17 +176,21 @@ python -m src.seed                        # one-shot: index the 4 samples
      becoming billions of near-identical vectors.*
    - **dedup** — perceptual hash (dHash + luminance) drops visually-identical
      neighbours **before** they cost CLIP compute; thumbnails batch-upload to
-     `frames/{user}/{id}/NNNNNN.jpg`.
+     `{user}/{video}/frames/NNNNNN.jpg`.
    - **embed + index** — batches of `CLIP_BATCH` frames go to the **warm CLIP
      service** (no per-video model load), then upsert to the visual collection
-     (`moments`) with deterministic IDs (`uuid5(video_id:frame_idx)` — re-runs
+     (`moments_l14`) with deterministic IDs (`uuid5(video_id:frame_idx)` — re-runs
      overwrite, never duplicate), tagged `user_id`, `video_id`, `ms`,
      `modality:frame`, `t_start`/`t_end`, `embed_version`.
-   - **transcript (YouTube only)** — captions → ~20s time-chunks → bge text
-     embeddings → the text collection (`moments_text`), tagged `modality:text`
-     with the same timestamps. **Best-effort:** uploads have no captions and some
-     videos have none — either way the video stays visual-only and the run never
-     fails. Runs *after* embed+index (whose delete clears both collections first).
+   - **transcript** — a video's speech becomes text: **YouTube** uses captions,
+     **uploads** are transcribed by **Whisper ASR** (`whisper-1`) from their own
+     audio ([src/ingest/asr.py](src/ingest/asr.py)). Either way the cues are the
+     durable `{user}/{video}/transcript.json`, then → ~20s time-chunks → OpenAI
+     `text-embedding-3-small` embeddings → the text collection
+     (`moments_text_openai`), tagged `modality:text` with the same timestamps.
+     **Best-effort:** only a caption-less YouTube video with no usable audio has
+     nothing to index — it stays visual-only and the run never fails. Runs
+     *after* embed+index (whose delete clears both collections first).
 
 Poll `GET /api/videos` (or watch the UI chips) until `indexed`.
 
@@ -194,20 +200,21 @@ Poll `GET /api/videos` (or watch the UI chips) until `indexed`.
 
 1. **Retrieve — both branches, in parallel, always** (no query router; routing
    fails exactly on the ambiguous questions where you need help most):
-   - **visual** — text-embedding into the *frame* space → Qdrant `moments`,
+   - **visual** — text-embedding into the *frame* space → Qdrant `moments_l14`,
      filtered by `user_id` (private *and* fast: the tenant index means a search
      touches only that user's slice), quantization-rescored. Milliseconds. The
      embedder is **provider-switchable** (`IMAGE_EMBED_PROVIDER`): local **CLIP**
      by default (free, offline, no key), or hosted **Jina CLIP v2** / **Cohere
      Embed v4** / **Voyage multimodal** / **Gemini** — see
      [Pluggable models](#pluggable-models-llms-and-embeddings).
-   - **text** — text query-embedding → Qdrant `moments_text` (YouTube
-     transcripts). Also provider-switchable (`TEXT_EMBED_PROVIDER`): **bge** via
-     fastembed by default (CPU, free, no key — search stays keyless), or
-     **OpenAI** / **Gemini** / **Cohere** / **Voyage** / **Jina** when you have a
-     key. Skipped cleanly when `ENABLE_TRANSCRIPT=false` or nothing is indexed yet.
+   - **text** — text query-embedding → Qdrant `moments_text_openai`
+     (transcripts — YouTube captions and Whisper on uploads). Also
+     provider-switchable (`TEXT_EMBED_PROVIDER`): **OpenAI `text-embedding-3-small`**
+     by default (needs `OPENAI_API_KEY`), or **bge** via fastembed (CPU, free, no
+     key — the keyless escape hatch) / **Gemini** / **Cohere** / **Voyage** /
+     **Jina**. Skipped cleanly when `ENABLE_TRANSCRIPT=false` or nothing is indexed yet.
 2. **Score — the fusion module** (`_fuse`, [src/rag/search.py](src/rag/search.py)).
-   The two branches' raw scores are incomparable (CLIP ~0.3 vs bge ~0.7), so we
+   The two branches' raw scores are incomparable (CLIP ~0.3 vs text ~0.7), so we
    never sort by raw score:
    - **RRF** — rank each branch on its own, score by rank `1/(RRF_K + rank)`, so
      a strong frame and a strong transcript hit compete fairly.
@@ -216,6 +223,11 @@ Poll `GET /api/videos` (or watch the UI chips) until `indexed`.
    - **cross-modal boost** — a moment where **both** a frame and a transcript
      chunk land at the same instant is ×`CROSS_MODAL_BOOST`: two independent
      modalities agreeing is the strongest relevance signal available.
+   - **cross-encoder rerank** — a local, keyless reranker (`RERANK_PROVIDER`,
+     default fastembed `ms-marco-MiniLM`) re-judges the top text candidates
+     against the question and blends its score with the normalized RRF
+     (`RERANK_WEIGHT`). **On by default;** set `ENABLE_RERANK=false` to fall back
+     to plain RRF.
    The top `TOP_K` fused moments go forward.
 3. **Gate 1 — confidence** on the *raw per-branch bests* (RRF scores are far too
    small to threshold on): abstain only when **neither** what's on screen
@@ -245,6 +257,22 @@ LLM_PROVIDER=gemini
 GEMINI_API_KEY=...
 ```
 
+**Shipped defaults.** Out of the box the stack is: image/visual embedder local
+CLIP **`clip-ViT-L-14`** (dim 768 → collection `moments_l14`), transcript
+embedder OpenAI **`text-embedding-3-small`** (dim 1536 → collection
+`moments_text_openai`), answer LLM **`gpt-4o`**, upload transcription **Whisper
+`whisper-1`**, and a local cross-encoder **reranker** (`ms-marco-MiniLM`) on by
+default. There are **four independently swappable slots** — image embedder
+(`IMAGE_EMBED_PROVIDER` / `CLIP_MODEL`), text embedder (`TEXT_EMBED_PROVIDER`),
+answer LLM (`LLM_PROVIDER`, bring-your-own, incl. any OpenAI-compatible server),
+and ASR (`ASR_PROVIDER`) — plus the reranker (`RERANK_PROVIDER`).
+
+> **A real run needs an `OPENAI_API_KEY`.** Because the default text embedder
+> *and* the default answer LLM (*and* Whisper) are all OpenAI, **one key powers
+> all three**. To run the transcript branch **without** a key, set
+> `TEXT_EMBED_PROVIDER=fastembed` (bge, CPU-local) — and the visual branch's
+> local CLIP needs no key either, so the whole search path can stay keyless.
+
 ```
 src/providers/
   registry.py     the table: endpoints, default models, dims, key env vars
@@ -258,7 +286,7 @@ actual frames:
 
 | provider | key env var | default model | notes |
 |---|---|---|---|
-| `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` | also the generic OpenAI-compatible client |
+| `openai` **default** | `OPENAI_API_KEY` | `gpt-4o` | also the generic OpenAI-compatible client |
 | `gemini` | `GEMINI_API_KEY` | `gemini-3.6-flash` | native SDK (`pip install google-genai`) |
 | `gemini_openai` | `GEMINI_API_KEY` | `gemini-3.6-flash` | same models, no extra dependency |
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` | `pip install anthropic` |
@@ -287,7 +315,7 @@ Gemini transcripts is a sensible setup.
 
 | provider | default model | dim (truncatable to) | key env var | install |
 |---|---|---|---|---|
-| `clip` **default** | `clip-ViT-B-32` | 512 | none — offline | sentence-transformers |
+| `clip` **default** | `clip-ViT-L-14` | 768 | none — offline | sentence-transformers |
 | `jina` | `jina-clip-v2` | 1024 (64–1024) | `JINA_API_KEY` | **nothing** |
 | `cohere` | `embed-v4.0` | 1536 (256–1536) | `COHERE_API_KEY` | **nothing** |
 | `voyage` | `voyage-multimodal-3.5` | 1024 (256–2048) | `VOYAGE_API_KEY` | **nothing** |
@@ -297,8 +325,8 @@ Gemini transcripts is a sensible setup.
 
 | provider | default model | dim | key env var | install |
 |---|---|---|---|---|
-| `fastembed` **default** | `BAAI/bge-small-en-v1.5` | 384 | none — offline | fastembed |
-| `openai` | `text-embedding-3-small` | 1536 | `OPENAI_API_KEY` (falls back to `LLM_API_KEY`) | `openai` |
+| `openai` **default** | `text-embedding-3-small` | 1536 | `OPENAI_API_KEY` (falls back to `LLM_API_KEY`) | `openai` |
+| `fastembed` | `BAAI/bge-small-en-v1.5` | 384 | none — offline (the keyless escape hatch) | fastembed |
 | `gemini` | `gemini-embedding-2` | 1536 | `GEMINI_API_KEY` | `google-genai` |
 | `cohere` | `embed-v4.0` | 1536 | `COHERE_API_KEY` | **nothing** |
 | `voyage` | `voyage-3.5` | 1024 | `VOYAGE_API_KEY` | **nothing** |
@@ -327,6 +355,16 @@ it appears to serialize per key), so `IMAGE_EMBED_PROVIDER=gemini` is best kept
 for small corpora or paired with a higher `FRAME_INTERVAL_SEC` / lower
 `MAX_FRAMES`. Tune the fan-out with `IMAGE_EMBED_CONCURRENCY`. The transcript
 branch is cheap everywhere — a video is a few dozen chunks, not hundreds of frames.
+
+**ASR** (`ASR_PROVIDER`) — how **uploads** become transcripts (YouTube uses
+captions and skips this). Default **`openai` `whisper-1`**, reusing the same
+OpenAI key; `ASR_MODEL` can be `gpt-4o-transcribe`. Set `ENABLE_ASR=false` (or
+`ASR_PROVIDER=""`) to leave uploads visual-only.
+
+**Reranker** (`RERANK_PROVIDER`) — a cross-encoder that re-judges the top text
+candidates and blends with RRF (`RERANK_WEIGHT`). Default **`fastembed`
+`ms-marco-MiniLM`** (local, keyless) — **on by default**; `cohere` (Rerank API)
+is the hosted option. Set `ENABLE_RERANK=false` to fall back to plain RRF.
 
 **Two things that will bite you, and what the code does about them:**
 
@@ -436,12 +474,12 @@ each stage **scales** as the corpus and traffic grow:
 flowchart TB
   q(["Question + user_id"])
   ve["visual branch<br/>CLIP text-embed"]
-  te["text branch<br/>bge query-embed"]
+  te["text branch<br/>OpenAI query-embed"]
   q --> ve
   q --> te
 
-  ve -->|"kNN, user_id filter"| vq[("Qdrant 'moments'<br/>int8 · on-disk · rescore")]
-  te -->|"kNN, user_id filter"| tq[("Qdrant 'moments_text'<br/>YouTube transcripts")]
+  ve -->|"kNN, user_id filter"| vq[("Qdrant 'moments_l14'<br/>int8 · on-disk · rescore")]
+  te -->|"kNN, user_id filter"| tq[("Qdrant 'moments_text_openai'<br/>captions + Whisper")]
 
   vq --> fuse
   tq --> fuse
@@ -451,7 +489,8 @@ flowchart TB
     r["① RRF — rank each branch on its own<br/>score = 1 / (RRF_K + rank)"]
     w["② time-window — group hits ≤ FUSION_WINDOW_S s<br/>(same video) into one 'moment'"]
     b["③ best-per-modality + ×CROSS_MODAL_BOOST<br/>when a frame AND transcript agree at that instant"]
-    r --> w --> b
+    x["④ cross-encoder rerank (default on)<br/>ms-marco-MiniLM · blend RERANK_WEIGHT"]
+    r --> w --> b --> x
   end
 
   fuse -->|"top-TOP_K fused moments"| gate{"Gate 1<br/>both raw branch-bests<br/>below threshold?"}
@@ -540,9 +579,9 @@ WFQ:   A▓ B▓ A▓ B▓ A▓ B▓ …            ← interleaved; B is served
 
 **Later, under real load** (design room exists, not built): per-tenant *quotas*
 and weights (the dispatcher's round-robin extends to weighted shares),
-backpressure on queue depth, Redis query cache, a cross-encoder reranker over
-the fused moments, and OCR / on-screen-text as a third branch (transcript hybrid
-search already ships — see the read path above).
+backpressure on queue depth, Redis query cache, and OCR / on-screen-text as a
+third branch (transcript hybrid search and a cross-encoder reranker already ship
+— see the read path above).
 
 ## Deploy (Fly.io)
 
@@ -596,7 +635,7 @@ curl -X POST localhost:8000/api/videos/presign \
 # 2) PUT the file to the returned url, then 3) register:
 curl -X POST localhost:8000/api/videos \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"video_id":"up_ab12cd34ef","key":"uploads/default/up_ab12cd34ef.mp4","title":"Demo"}'
+  -d '{"video_id":"up_ab12cd34ef","key":"default/up_ab12cd34ef/source.mp4","title":"Demo"}'
 
 # YouTube instead:
 curl -X POST localhost:8000/api/videos \
@@ -633,8 +672,16 @@ the four entrypoints as top-level modules in the package.
 ├── .github/
 │   └── workflows/
 │       └── fly-deploy.yml   CI: deploy to Fly on push to dev
-├── ui/
-│   └── index.html           single-file web UI (presigned upload, status poll, player)
+├── ui/                     static pages + JS modules, no build step
+│   ├── landing.html         marketing / entry page
+│   ├── demo.html            read-only sample-project UI
+│   ├── signin.html          email sign-in page
+│   ├── app.html             the workspace (presigned upload, status poll, player)
+│   ├── app.css              shared styles
+│   ├── common.js            shared helpers
+│   ├── demo.js              sample-project logic
+│   ├── workspace.js         upload / status / ask / player
+│   └── signin.js            sign-in logic
 ├── examples/
 │   └── quickstart.py        manual in-process seed + terminal query demo
 └── src/                     ── entrypoints ──────────────────────────────────
@@ -664,9 +711,9 @@ the four entrypoints as top-level modules in the package.
     │   │   └── anthropic.py     Anthropic Messages API
     │   └── embed/           retrieval embeddings, both branches
     │       ├── base.py          config/dim resolution, HTTP, L2-normalizing
-    │       ├── clip_local.py    local CLIP — joint image+text (default)
-    │       ├── fastembed_text.py bge — transcripts (default)
-    │       ├── openai_text.py   OpenAI + any OpenAI-compatible embeddings
+    │       ├── clip_local.py    local CLIP — joint image+text (default, clip-ViT-L-14)
+    │       ├── fastembed_text.py bge — transcripts (keyless, opt-in)
+    │       ├── openai_text.py   OpenAI + any OpenAI-compatible embeddings (transcript default)
     │       ├── gemini.py        gemini-embedding-2 — unified space, both branches
     │       ├── jina.py          jina-clip-v2 / v3 — both branches, no SDK
     │       ├── cohere.py        embed-v4.0 — both branches, no SDK
@@ -681,19 +728,22 @@ the four entrypoints as top-level modules in the package.
     │   ├── frames.py        ffmpeg pipe-to-memory sampling (interval | scene)
     │   ├── dedup.py         perceptual-hash dedup (before embedding spends compute)
     │   ├── transcript.py    YouTube captions → time-chunks (the text branch)
+    │   ├── asr.py           Whisper ASR: transcribe uploaded videos' own audio
     │   └── pipeline.py      the Prefect flow: fetch → sample → embed/index → transcript
     └── rag/
         ├── embeddings.py    back-compat shim -> providers/embed/
+        ├── rerank.py        cross-encoder reranker over the fused moments (default on)
         ├── vector_store.py  multi-tenant Qdrant: visual + text collections, int8/on-disk
-        └── search.py        2-branch retrieve → RRF fusion/scoring → gate → cited answer
+        └── search.py        2-branch retrieve → RRF fusion/scoring → rerank → gate → cited answer
 ```
 
 ## Security notes (presigned uploads)
 
 - On a public deploy, set `ADMIN_TOKEN` so the presign endpoint is authed —
   otherwise anyone can mint upload URLs. (Unset = open, fine for local dev.)
-- The **server** generates the key (`uploads/{user}/{uuid}`), never the client;
-  register re-checks the prefix, so users can't claim others' objects.
+- The **server** generates the key (`{user}/{video}/source.{ext}`, everything for
+  a video under `{user}/{video}/`), never the client; register re-checks the
+  prefix, so users can't claim others' objects.
 - Size and content-type are capped at presign time and re-verified via HEAD.
 - Keep the bucket **private**; thumbnails/playback go out via presigned GETs.
 - ffmpeg/yt-dlp parse untrusted input — run workers in containers, not on the

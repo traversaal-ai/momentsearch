@@ -59,7 +59,19 @@ def t_fetch(video_id: str, user_id: str) -> str:
     dup = db.find_duplicate(user_id, source_hash, exclude_id=video_id)
     if dup:
         path.unlink(missing_ok=True)
+        # This stub's own raw upload in the bucket is now orphaned — it skipped
+        # before sampling, so it has no frames/transcript, only the raw file.
+        # Remove it so a re-upload doesn't leak a video object on GCP.
+        if row.get("storage_key"):
+            storage.delete_key(row["storage_key"])
+        # Re-upload of content the user already has indexed (e.g. they deleted the
+        # session and added the same file again). Don't leave a dead "duplicate"
+        # card: hand the working original to whatever session(s) this attempt was
+        # dropped into, then drop this redundant stub.
         db.set_status(video_id, "skipped", error=f"duplicate of {dup['id']}")
+        db.resolve_duplicate(video_id, dup["id"])
+        print(f"[fetch] {video_id}: duplicate of {dup['id']} — linked original, "
+              f"dropped stub + its raw upload")
         return ""
     return str(path)
 

@@ -25,7 +25,6 @@ from pathlib import Path
 from .config import (
     AWS_REGION,
     DATA,
-    FRAME_KEY_PREFIX,
     PRESIGN_EXPIRY_S,
     PRESIGN_GET_EXPIRY_S,
     STORAGE_ACCESS_KEY_ID,
@@ -33,7 +32,6 @@ from .config import (
     STORAGE_ENDPOINT,
     STORAGE_PROVIDER,
     STORAGE_SECRET_ACCESS_KEY,
-    UPLOAD_KEY_PREFIX,
     gcs_service_account_info,
 )
 
@@ -42,23 +40,31 @@ _client = None
 
 # ── Key layout (every key user-scoped — tenant isolation at the path level) ──
 
+def video_prefix(user_id: str, video_id: str) -> str:
+    """Everything for ONE video lives under this single prefix — its frames, its
+    source upload and its transcript. So a video's whole footprint is one prefix
+    delete, and a user's whole footprint is `<user_id>/`. Content-addressed by
+    (owner, video): sessions are pointers in Postgres, never in the key."""
+    return f"{user_id}/{video_id}/"
+
+
 def upload_key(user_id: str, video_id: str, ext: str) -> str:
-    return f"{UPLOAD_KEY_PREFIX}{user_id}/{video_id}{ext}"
+    return f"{video_prefix(user_id, video_id)}source{ext}"
 
 
 def frame_key(user_id: str, video_id: str, index: int) -> str:
-    return f"{FRAME_KEY_PREFIX}{user_id}/{video_id}/{index:06d}.jpg"
+    return f"{video_prefix(user_id, video_id)}frames/{index:06d}.jpg"
 
 
 def frame_prefix(user_id: str, video_id: str) -> str:
-    return f"{FRAME_KEY_PREFIX}{user_id}/{video_id}/"
+    return f"{video_prefix(user_id, video_id)}frames/"
 
 
 def transcript_key(user_id: str, video_id: str) -> str:
     """Durable copy of a video's timed transcript (JSON: [{text,t_start,t_end}]).
     Lets us re-embed transcripts (e.g. on a text-model swap) without re-fetching
     captions from YouTube — the same reason akash persists its transcripts."""
-    return f"transcripts/{user_id}/{video_id}.json"
+    return f"{video_prefix(user_id, video_id)}transcript.json"
 
 
 def _s3():

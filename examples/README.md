@@ -50,4 +50,5 @@ MomentSearch reads the **picture** for every video, and for **YouTube** also the
 **transcript** (captions), fusing the two. Talks with slides, diagrams, demos, and
 code (like these) are an ideal fit for the visual side. For pure talking-head
 podcasts the visual signal is thin — but on YouTube the transcript branch still
-surfaces what was *said*. Uploaded (non-YouTube) files are visual-only for now.
+surfaces what was *said*. Uploaded (non-YouTube) files are transcribed via Whisper
+(ASR) when they're captionless, so they get the same transcript branch.

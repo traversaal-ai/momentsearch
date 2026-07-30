@@ -59,7 +59,7 @@ class LLMPreset:
 LLM_PRESETS: Mapping[str, LLMPreset] = {
     # --- Hosted, OpenAI dialect ----------------------------------------------
     "openai": LLMPreset(
-        label="OpenAI", kind="openai", default_model="gpt-4o-mini",
+        label="OpenAI", kind="openai", default_model="gpt-4o",
         key_envs=("OPENAI_API_KEY",),
         notes="Also the generic OpenAI-compatible client: set LLM_BASE_URL to "
               "reach any server that speaks Chat Completions."),

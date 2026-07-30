@@ -29,7 +29,7 @@ from .. import db
 from ..config import INFLIGHT_STATUSES
 from ..rag import search as rag_search
 from ..samples import SAMPLE_VIDEOS, is_sample, sample_video_id
-from .videos import _public, require_auth, user_id
+from .videos import _public, purge_video, require_auth, user_id
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -57,15 +57,30 @@ def _require(session_id: str, uid: str) -> dict:
     return row
 
 
+def _link_samples(session_id: str) -> None:
+    """Link every EXISTING sample row into a session (idempotent). Samples that
+    aren't seeded yet are simply skipped — the FK would reject ids the seeder
+    hasn't created — and picked up on a later call (see _sync_demo_session)."""
+    for vid in db.videos_by_ids([sample_video_id(v["url"]) for v in SAMPLE_VIDEOS]):
+        db.add_session_video(session_id, vid)
+
+
 def _seed_demo_session(uid: str) -> None:
     """Give a workspace with NO sessions the read-only demo one, so a fresh
-    sign-in can chat immediately. Only the samples that exist as rows are
-    linked; the FK would reject ids the seeder hasn't created yet."""
+    sign-in can chat immediately."""
     sid = f"s_{uuid.uuid4().hex}"
     db.create_session(sid, uid, DEMO_TITLE, kind="demo")
-    known = db.videos_by_ids([sample_video_id(v["url"]) for v in SAMPLE_VIDEOS])
-    for vid in known:
-        db.add_session_video(sid, vid)
+    _link_samples(sid)
+
+
+def _sync_demo_session(rows: list[dict]) -> None:
+    """Self-heal an empty/partial demo session. If a workspace's demo session was
+    created before the samples were indexed (e.g. a signup during a re-seed), it
+    would be empty forever — _seed_demo_session only runs on a workspace with NO
+    sessions. So whenever the demo session is missing samples, back-fill them."""
+    demo = next((r for r in rows if r.get("kind") == "demo"), None)
+    if demo and (demo.get("video_count") or 0) < len(SAMPLE_VIDEOS):
+        _link_samples(demo["id"])
 
 
 # ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -84,6 +99,8 @@ def list_sessions(uid: str = Depends(user_id)):
     if not rows:                      # first visit (or they deleted everything)
         _seed_demo_session(uid)
         rows = db.list_sessions(uid)
+    else:                             # back-fill a demo session seeded while empty
+        _sync_demo_session(rows)
     return {"sessions": [_session_out(r) for r in rows]}
 
 
@@ -118,10 +135,25 @@ def rename(session_id: str, req: Rename, uid: str = Depends(user_id)):
 
 @router.delete("/{session_id}", dependencies=[Depends(require_auth)])
 def delete(session_id: str, uid: str = Depends(user_id)):
+    _require(session_id, uid)
+    # Snapshot this session's videos before its pointers are cascaded away.
+    vids = [v["id"] for v in db.session_videos(session_id)]
     if not db.delete_session(session_id, uid):
         raise HTTPException(404, "Session not found.")
-    # The videos are untouched — they belong to the workspace, not the session.
-    return {"ok": True, "session_id": session_id}
+    # Reference-counted cleanup: purge every video this session was the LAST to
+    # hold (Qdrant + GCP + row). A video still referenced by another session
+    # survives; shared samples are never touched.
+    purged = []
+    for vid in vids:
+        if is_sample(vid):
+            continue
+        row = db.get_video(vid)
+        if row is None or row["user_id"] != uid:
+            continue
+        if db.count_video_sessions(vid) == 0:
+            purge_video(vid, uid, row)
+            purged.append(vid)
+    return {"ok": True, "session_id": session_id, "purged": purged}
 
 
 # ── Membership ───────────────────────────────────────────────────────────────

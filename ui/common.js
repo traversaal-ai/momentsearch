@@ -81,7 +81,10 @@ function modTags(mods){
    video's thumbnail rather than showing an empty box. */
 function thumbOf(c){
   const yid=ytIdOf(c);
-  return c.thumbnail || (yid ? `https://img.youtube.com/vi/${yid}/hqdefault.jpg` : null);
+  // matched frame -> the video's own still nearest this moment (text-only) ->
+  // YouTube cover as a last resort. Uploads have no cover, so `preview` is what
+  // keeps a "said" upload moment from showing an empty box.
+  return c.thumbnail || c.preview || (yid ? `https://img.youtube.com/vi/${yid}/hqdefault.jpg` : null);
 }
 function momentCard(c, i){
   const img=thumbOf(c);
@@ -182,7 +185,7 @@ function openMoment(list, n){
   $("#mFrameLabel").textContent = isFrame ? "Matched frame" : "Matched on transcript";
   $("#mFrameDesc").textContent = isFrame
     ? "This is what CLIP matched your question against — the still it judged closest to what you asked."
-    : "This moment matched on what was said (transcript). Shown is the video’s thumbnail — press play to jump to the exact spot.";
+    : "This moment matched on what was said (transcript). The still is the video at that moment — press play to jump to the exact spot.";
   $("#mOut").href=c.deeplink||"#";
 
   teardownPlayer();
@@ -224,20 +227,45 @@ function wireModal(){
 
 /* ---------- video status ---------- */
 const INFLIGHT=["pending","queued","fetching","sampling","embedding"];
+/* How long ingest took: added (created_at) -> ready (updated_at). Nothing
+   touches the row after it's indexed, so updated_at is the finish time. */
+function ingestDur(v){
+  if(!v.created_at || !v.updated_at) return "";
+  const s = Math.round((new Date(v.updated_at) - new Date(v.created_at))/1000);
+  if(!(s > 0) || s > 86400) return "";           // guard clock skew / re-index
+  return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+}
 function statusBadge(v){
   const src = v.is_sample ? "sample" : (v.source==="youtube" ? "YouTube" : "upload");
   const pct = v.progress ? ` ${Math.round(v.progress*100)}%` : "";
   switch(v.status){
-    case "indexed":   return {icon:"✓", label:`${v.frame_count||0} frames · ${src}`, c:"text-[#1f7a43]"};
+    case "indexed": {
+      const t = ingestDur(v);
+      return {icon:"✓", label:`${v.frame_count||0} frames · ${src}${t?` · indexed in ${t}`:""}`, c:"text-[#1f7a43]"};
+    }
     case "pending":   return {icon:"◷", label:"waiting (fair queue)", c:"text-[#8a6d1a]"};
     case "queued":    return {icon:"◷", label:"queued",              c:"text-[#8a6d1a]"};
     case "fetching":  return {icon:"⏬", label:"fetching video…",     c:"text-[#8a6d1a]"};
     case "sampling":  return {icon:"⏳", label:"sampling"+pct,        c:"text-[#8a6d1a]"};
     case "embedding": return {icon:"⏳", label:"embedding"+pct,       c:"text-[#8a6d1a]"};
     case "failed":    return {icon:"⚠", label:"failed",              c:"text-coral2"};
-    case "skipped":   return {icon:"⊘", label:"duplicate",           c:"text-muted"};
+    case "skipped":   return {icon:"↗", label:"already indexed",     c:"text-muted"};
     default:          return {icon:"•", label:v.status,              c:"text-muted"};
   }
+}
+
+/* SHA-256 of a file as lowercase hex — matches the server's content hash, so an
+   identical re-upload can be detected BEFORE any bytes are sent (the instant
+   reuse path). Needs a secure context (https / localhost); returns null if the
+   Web Crypto API isn't available so the caller just falls back to a normal
+   upload + server-side dedup. */
+async function sha256Hex(file){
+  try{
+    if(!(crypto && crypto.subtle)) return null;
+    const buf=await file.arrayBuffer();
+    const d=await crypto.subtle.digest("SHA-256", buf);
+    return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,"0")).join("");
+  }catch{ return null; }
 }
 
 /* Upload straight to the bucket with real byte progress. XHR, not fetch: fetch

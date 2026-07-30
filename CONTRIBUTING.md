@@ -43,13 +43,14 @@ python -m src.providers --live   # actually call each configured model
 
 ## Project conventions
 
-- **Keep it minimal.** The frontend is a single `index.html` with no build step — please
-  keep it that way unless there's a strong reason.
+- **Keep it minimal.** The frontend is a few static HTML pages + vanilla-JS modules in
+  `ui/` (no build step) — please keep it that way unless there's a strong reason.
 - **Retrieval stays local *by default*.** The default embedders (CLIP + bge) run without any
   API key. Hosted embedders are opt-in; new features shouldn't make a key mandatory for search.
 - **Visual-first, multimodal for YouTube.** The core is visual (frames); for
   YouTube it also indexes the **transcript** (captions) and fuses the two branches by rank.
-  Uploaded files stay visual-only for now (no audio transcription yet — that'd need Whisper).
+  Uploaded files are transcribed with Whisper (ASR) when they have no captions, so they're
+  multimodal too.
 - **New model provider = a row in the table, not a new code path.** Add it to
   `src/providers/registry.py`; only a genuinely different wire format needs an adapter module
   in `src/providers/llm/` or `src/providers/embed/`. Keep provider SDKs **lazily imported**
