@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Demo · MomentSearch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    colors: { paper:"#FBF7F0", paper2:"#F3ECE0", card:"#FFFFFF", ink:"#1E1B16",
+              muted:"#6B6357", line:"#E7DECF", coral:"#FF5A3C", coral2:"#E8472B" },
+    fontFamily: { serif:['Fraunces','Georgia','serif'], sans:['Inter','system-ui','sans-serif'] },
+  }}}
+</script>
+<link rel="stylesheet" href="/ui/app.css">
+<!--MS_MODE-->
+</head>
+<body class="min-h-screen bg-paper text-ink">
+
+<div class="grain" aria-hidden="true"></div>
+
+<header class="border-b border-line">
+  <div class="max-w-6xl mx-auto px-6 py-4 flex items-center gap-3">
+    <a href="/" class="flex items-center gap-1 text-sm text-muted hover:text-ink shrink-0" title="Back to home">
+      <span aria-hidden="true">←</span><span class="hidden sm:inline">Home</span>
+    </a>
+    <span class="w-px h-5 bg-line shrink-0" aria-hidden="true"></span>
+    <a href="/" id="brand" class="flex items-center gap-2.5">
+      <span class="w-8 h-8 rounded-lg bg-coral flex items-center justify-center text-white font-bold display">M</span>
+      <span class="font-bold tracking-tight hidden sm:inline">MomentSearch</span>
+    </a>
+    <span class="text-xs px-2 py-0.5 rounded-full border border-line text-muted">demo</span>
+    <span id="llmBadge" class="ml-auto text-xs px-3 py-1 rounded-full border border-line text-muted">checking…</span>
+    <a id="navAuth" href="/signin" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-ink text-white hover:bg-black transition">Sign in</a>
+  </div>
+</header>
+
+<!-- HERO / ASK — collapses into a sticky bar once there's an answer -->
+<section id="hero" class="px-6 text-center">
+  <div id="heroInner">
+    <div id="heroText">
+      <div class="rise inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-6" style="--d:0">
+        ● Four LLM talks, already indexed
+      </div>
+      <h1 id="heroTitle" class="display text-4xl sm:text-5xl font-bold leading-[1.12] tracking-tight"></h1>
+      <p class="rise mt-4 text-[17px] text-muted leading-relaxed mx-auto max-w-lg" style="--d:5">
+        Ask anything shown or said across these talks. Nothing is saved here —
+        sign in when you want your own videos and sessions.
+      </p>
+    </div>
+
+    <div class="rise mt-8 flex items-end gap-2 bg-white border border-line rounded-2xl shadow-sm px-3 py-2.5 text-left focus-within:border-coral focus-within:ring-4 focus-within:ring-coral/15 transition" style="--d:7">
+      <div class="relative flex-1">
+        <textarea id="q" rows="1" aria-label="Ask about anything shown on screen"
+          class="relative z-10 w-full bg-transparent outline-none resize-none text-[16px] leading-relaxed px-2 py-2"></textarea>
+        <div id="ghost" class="ghost px-2 py-2 text-[16px] leading-relaxed">Ask about anything shown on screen…</div>
+      </div>
+      <button id="go" aria-label="Ask"
+        class="shrink-0 w-10 h-10 rounded-xl bg-coral hover:bg-coral2 text-white text-lg flex items-center justify-center transition">→</button>
+    </div>
+
+    <div id="heroExtras">
+      <div id="examples" class="rise mt-5 flex flex-wrap gap-2 justify-center" style="--d:9"></div>
+    </div>
+  </div>
+</section>
+
+<main class="max-w-6xl mx-auto px-6 pb-16 pt-2">
+
+  <!-- RESULTS -->
+  <section id="resultsWrap" class="hidden mt-8">
+    <article id="article" class="max-w-3xl"></article>
+    <div class="flex items-center justify-between mt-10 mb-4">
+      <h3 class="display text-2xl font-600">Moments</h3>
+      <span class="text-muted text-sm">Click any moment to play it here.</span>
+    </div>
+    <div id="sources" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+  </section>
+
+  <!-- WHAT'S IN THE DEMO -->
+  <section id="library" class="bg-card border border-line rounded-2xl p-5 mt-8">
+    <h2 class="display text-xl font-600 mb-1">In this demo</h2>
+    <p class="text-xs text-muted mb-4">A curated set of LLM explainers, indexed by what appears on screen.</p>
+    <div id="videos" class="flex flex-wrap gap-2"></div>
+    <div class="mt-5 pt-4 border-t border-line text-sm text-muted">
+      <b class="text-ink">Want your own videos?</b>
+      <a href="/signin" class="text-coral2 font-semibold hover:text-coral">Sign in</a>
+      to get sessions you can upload into and chats that are saved.
+    </div>
+  </section>
+</main>
+
+<!-- PLAYER MODAL -->
+<div id="modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+  <div class="bg-card w-full max-w-5xl rounded-2xl overflow-hidden shadow-2xl max-h-[92vh] flex flex-col fade-in">
+    <div class="flex items-start justify-between gap-3 px-4 py-2.5 border-b border-line">
+      <div class="min-w-0">
+        <div id="mTitle" class="text-sm font-semibold leading-snug truncate">Moment</div>
+        <div id="mMeta" class="text-xs text-muted mt-0.5"></div>
+      </div>
+      <button id="mClose" class="shrink-0 w-8 h-8 rounded-full hover:bg-paper2 flex items-center justify-center text-muted text-lg">✕</button>
+    </div>
+    <div class="flex flex-col md:flex-row min-h-0 flex-1 overflow-hidden">
+      <div class="md:flex-1 flex flex-col min-w-0">
+        <div id="playerBox" class="bg-black aspect-video shrink-0"></div>
+        <div class="flex items-center gap-3 px-4 py-3 border-t border-line">
+          <img id="mFrame" class="w-24 aspect-video object-cover rounded-lg border border-line bg-paper2" alt="matched frame">
+          <div class="text-xs text-muted">
+            <div id="mFrameLabel" class="font-semibold text-ink mb-0.5">Matched frame</div>
+            <span id="mFrameDesc"></span>
+            <a id="mOut" href="#" target="_blank" class="text-coral2 font-semibold hover:text-coral block mt-1">Open on source ↗</a>
+          </div>
+        </div>
+      </div>
+      <!-- Synced transcript: active line follows playback, click a line to jump -->
+      <div id="transcriptWrap" class="md:w-80 shrink-0 border-t md:border-t-0 md:border-l border-line flex flex-col min-h-0">
+        <div class="px-4 py-2 text-[11px] uppercase tracking-wider text-muted font-semibold border-b border-line shrink-0">Transcript · click a line to jump</div>
+        <div id="transcriptPanel" class="overflow-y-auto p-2 grow min-h-[120px] max-h-[40vh] md:max-h-none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="border-t border-line">
+  <div class="max-w-6xl mx-auto px-6 py-6 text-xs text-muted flex justify-between flex-wrap gap-2">
+    <span>Open source · Apache 2.0 · CLIP + Qdrant + bring-your-own-LLM</span>
+    <span><a class="hover:text-ink" href="https://github.com/traversaal-ai/momentsearch">GitHub</a></span>
+  </div>
+</footer>
+
+<script src="/ui/common.js"></script>
+<script src="/ui/demo.js"></script>
+</body>
+</html>

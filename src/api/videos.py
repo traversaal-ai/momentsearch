@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import config, db, jobs, storage
+from .auth import workspace_from_token
 from ..samples import is_sample
 from ..config import (
     ADMIN_TOKEN,
@@ -36,22 +37,45 @@ from ..rag import vector_store
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 _USER_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# Ids minted by /api/auth/demo. Reserved: reaching one requires its token.
+_WORKSPACE_PREFIX = "u_"
 _EXT_RE = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
 _YT_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?v=|shorts/|live/|embed/)|youtu\.be/)([A-Za-z0-9_-]{11})")
 
 
 def require_auth(authorization: str | None = Header(default=None)) -> None:
+    """A signed demo session authorizes writes to ITS OWN workspace (user_id
+    comes from the same token, below — it can't write into anyone else's).
+    Otherwise fall back to the server-wide ADMIN_TOKEN."""
+    if workspace_from_token(authorization):
+        return
     if not ADMIN_TOKEN:  # dev convenience — set ADMIN_TOKEN in any real deploy
         return
     if authorization != f"Bearer {ADMIN_TOKEN}":
         raise HTTPException(401, "Missing or invalid bearer token.")
 
 
-def user_id(x_user_id: str | None = Header(default=None)) -> str:
+def user_id(x_user_id: str | None = Header(default=None),
+            authorization: str | None = Header(default=None)) -> str:
+    """The tenant this request acts as.
+
+    A signed session token WINS over X-User-Id: the workspace is proven by the
+    signature, so a browser can't reach another one by editing a header. The
+    header path stays for scripts, curl and local dev (no token = the default
+    tenant, exactly as before sign-in existed).
+    """
+    signed = workspace_from_token(authorization)
+    if signed:
+        return signed
     uid = (x_user_id or DEFAULT_USER_ID).strip()
     if not _USER_RE.match(uid):
         raise HTTPException(400, "Invalid X-User-Id.")
+    # A sign-in workspace (u_<uuid>) can ONLY be reached with its token.
+    # Otherwise guessing an id would be enough to read someone's library, since
+    # the read endpoints are deliberately open for the anonymous demo tenant.
+    if uid.startswith(_WORKSPACE_PREFIX):
+        raise HTTPException(401, "That workspace needs its session token.")
     return uid
 
 
@@ -112,6 +136,7 @@ class RegisterRequest(BaseModel):
     video_id: str | None = None   # upload (from /presign)
     key: str | None = None        # upload (from /presign)
     title: str | None = None
+    session_id: str | None = None  # drop it straight into this session
 
 
 @router.post("", status_code=202, dependencies=[Depends(require_auth)])
@@ -141,6 +166,13 @@ def register(req: RegisterRequest, uid: str = Depends(user_id)):
     else:
         raise HTTPException(400, "Provide either url (YouTube) or video_id+key (upload).")
 
+    # Adding a video FROM a session puts it in that session — that's where the
+    # user is, and a video nobody can find isn't much use. Unknown/foreign
+    # session ids are ignored rather than fatal: the video is already registered
+    # and ingesting by this point, so failing here would strand it.
+    if req.session_id and db.get_session(req.session_id, uid):
+        db.add_session_video(req.session_id, row["id"])
+
     # Fair dispatch (WFQ): leave it `pending` — the dispatcher admits it in fair
     # order (src/dispatcher.py). FIFO mode: enqueue to Prefect immediately.
     if config.ENABLE_FAIR_DISPATCH:
@@ -165,7 +197,10 @@ def _public(row: dict) -> dict:
 
 @router.get("")
 def list_videos(uid: str = Depends(user_id), status: str | None = None):
-    return {"videos": [_public(r) for r in db.list_videos(uid, status=status)]}
+    # Samples ride along in every workspace (read-only, undeletable) so a new
+    # sign-in has something to search before it has ingested anything.
+    rows = db.list_videos(uid, status=status, include_samples=True)
+    return {"videos": [_public(r) for r in rows]}
 
 
 @router.get("/{video_id}")
@@ -201,6 +236,7 @@ def delete(video_id: str, uid: str = Depends(user_id)):
         raise HTTPException(404, "Video not found.")
     vector_store.delete_video(uid, video_id)
     storage.delete_prefix(storage.frame_prefix(uid, video_id))
+    storage.delete_key(storage.transcript_key(uid, video_id))  # durable transcript copy (idempotent)
     if row.get("storage_key"):
         storage.delete_key(row["storage_key"])
     db.delete_video(video_id)

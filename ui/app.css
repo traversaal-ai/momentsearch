@@ -1,0 +1,162 @@
+/* MomentSearch — type, motion and texture: the parts Tailwind can't express.
+ *
+ * The design tokens (paper / ink / coral / line, Fraunces + Inter) are declared
+ * once in index.html's tailwind.config. NOTHING here introduces a colour or a
+ * typeface that isn't already in that palette — this file only adds movement.
+ *
+ * Motion budget: entrances are one 60ms cascade, the only looping animations
+ * are the caret and in-progress indicators, and every animation collapses
+ * under prefers-reduced-motion (bottom of file).
+ */
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+html,body{background:#FBF7F0;color:#1E1B16;font-family:Inter,system-ui,sans-serif}
+.display{font-family:Fraunces,Georgia,serif}
+::selection{background:rgba(255,90,60,.22)}
+
+.prose-body{font-size:16px;line-height:1.75;color:#2a261f}
+.prose-body b,.prose-body strong{font-weight:700;color:#1E1B16}
+.prose-body ul{margin:8px 0}
+.prose-body li{position:relative;padding-left:18px;margin:5px 0}
+.prose-body li:before{content:"";position:absolute;left:2px;top:10px;width:6px;height:6px;
+  border-radius:50%;background:#FF5A3C}
+
+/* Citation pill — click to play the moment it points at. */
+.cite{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;
+  padding:0 5px;margin:0 2px;background:rgba(255,90,60,.14);color:#E8472B;
+  border:1px solid rgba(255,90,60,.35);border-radius:6px;font-size:11px;font-weight:700;
+  cursor:pointer;vertical-align:1px;transition:background .18s,color .18s,transform .18s}
+.cite:hover{background:#FF5A3C;color:#fff;transform:translateY(-1px)}
+
+.chip{position:relative;overflow:hidden;font-size:12.5px;padding:7px 13px;border:1px solid #E7DECF;
+  border-radius:999px;background:#fff;color:#4f4738;cursor:pointer;
+  transition:border-color .2s,color .2s,opacity .25s,transform .2s}
+.chip:hover{border-color:#FF5A3C;color:#1E1B16;transform:translateY(-1px)}
+
+.tab{padding:6px 14px;border-radius:999px;cursor:pointer;font-size:13px;border:1px solid #E7DECF;
+  background:#fff;color:#6B6357;transition:border-color .2s,color .2s,background .2s}
+.tab.active{border-color:#FF5A3C;color:#E8472B;background:rgba(255,90,60,.07)}
+
+.shimmer{background:linear-gradient(90deg,#F3ECE0 25%,#FBF7F0 37%,#F3ECE0 63%);
+  background-size:400% 100%;animation:sh 1.3s infinite}
+@keyframes sh{0%{background-position:100% 0}100%{background-position:0 0}}
+
+.fade-in{animation:fi .45s ease both}
+@keyframes fi{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* ── Paper grain ───────────────────────────────────────────────────────────
+ * A single fixed multiply layer so the whole page reads as printed stock
+ * rather than a flat #FBF7F0 fill. Purely decorative, never interactive.     */
+.grain{position:fixed;inset:0;z-index:60;pointer-events:none;opacity:.04;mix-blend-mode:multiply;
+  background-repeat:repeat;background-size:180px 180px;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/></filter><rect width='180' height='180' filter='url(%23n)'/></svg>")}
+
+/* ── Entrance cascade ──────────────────────────────────────────────────────
+ * Every above-the-fold element gets .rise and a --d slot; 60ms apart.        */
+.rise{opacity:0;animation:rise .62s cubic-bezier(.22,.68,.36,1) forwards;
+  animation-delay:calc(var(--d,0)*60ms)}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+/* The Fraunces headline arrives word by word, with a slight settle. */
+.word{display:inline-block;opacity:0;animation:word .7s cubic-bezier(.22,.68,.36,1) forwards;
+  animation-delay:calc(200ms + var(--i,0)*70ms)}
+@keyframes word{from{opacity:0;transform:translateY(20px) rotate(1.4deg)}to{opacity:1;transform:none}}
+
+/* …and the coral word draws its own underline once the words have landed.
+ * non-scaling-stroke keeps the line an even weight despite the non-uniform
+ * scale that stretching the viewBox to the word's width implies.            */
+.mark{position:relative;white-space:nowrap}
+.mark svg{position:absolute;left:0;width:100%;bottom:-.16em;height:.36em;overflow:visible}
+.mark path{fill:none;stroke:#FF5A3C;stroke-width:3.4;stroke-linecap:round;
+  vector-effect:non-scaling-stroke;stroke-dasharray:340;stroke-dashoffset:340;
+  animation:draw .9s 1s cubic-bezier(.4,0,.2,1) forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+
+/* ── Typewriter placeholder ────────────────────────────────────────────────
+ * A real element under the textarea (not the placeholder attribute) so it can
+ * carry a blinking caret. Identical padding/size to the textarea, so the two
+ * are pixel-aligned; JS hides it the moment you focus or type.              */
+.ghost{position:absolute;inset:0;pointer-events:none;color:#6B6357;white-space:pre-wrap}
+.ghost.hide{visibility:hidden}
+.caret{display:inline-block;width:1.5px;height:1.05em;margin-left:2px;vertical-align:-.17em;
+  background:#FF5A3C;animation:blink 1.05s steps(1,end) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ── Hero → sticky search bar ──────────────────────────────────────────────
+ * Asking doesn't navigate: body.asking collapses the hero copy, widens the
+ * column, pins the bar to the top and (via order:) lifts the answer above the
+ * library. The bar itself never moves in the DOM, so there's no FLIP and no
+ * chance of it landing a pixel off.                                          */
+#hero{padding-top:80px;padding-bottom:24px;
+  transition:padding .5s cubic-bezier(.4,0,.2,1),background .35s,border-color .35s}
+#heroInner{max-width:42rem;margin:0 auto;transition:max-width .5s cubic-bezier(.4,0,.2,1)}
+#heroText,#heroExtras{transition:opacity .3s ease,max-height .5s cubic-bezier(.4,0,.2,1),
+  margin .5s,filter .3s}
+#heroText{max-height:420px}
+#heroExtras{max-height:140px}
+
+body.asking #hero{padding-top:14px;padding-bottom:12px;position:sticky;top:0;z-index:30;
+  background:rgba(251,247,240,.92);backdrop-filter:blur(10px);border-bottom:1px solid #E7DECF}
+body.asking #heroInner{max-width:72rem}
+body.asking #heroText,body.asking #heroExtras{opacity:0;max-height:0;margin:0;
+  overflow:hidden;filter:blur(2px);pointer-events:none}
+
+/* Answer first, library second — once there's something to read. */
+main{display:flex;flex-direction:column}
+#library{order:2}
+#resultsWrap{order:3}
+body.asking #library{order:3}
+body.asking #resultsWrap{order:2}
+
+/* ── Results ───────────────────────────────────────────────────────────────
+ * Moment cards land in sequence rather than all at once.                     */
+.pop{opacity:0;animation:pop .5s cubic-bezier(.22,.68,.36,1) forwards;
+  animation-delay:calc(var(--i,0)*55ms)}
+@keyframes pop{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:none}}
+
+/* ── Workspace panes (/app) ────────────────────────────────────────────────
+ * Sessions | Playground | Videos sit side by side from xl up. Below that only
+ * one is on screen at a time, chosen by the header's tabs (body[data-pane]).  */
+@media (max-width:1279px){
+  .pane{display:none}
+  body[data-pane="sessions"] #paneSessions,
+  body[data-pane="chat"]     #paneChat,
+  body[data-pane="videos"]   #paneVideos{display:flex}
+}
+
+/* ── Sign-in sheet ─────────────────────────────────────────────────────────
+ * A sheet from the bottom on phones, a centred card on desktop.              */
+#authCard{animation:sheet .38s cubic-bezier(.22,.68,.36,1) both}
+@keyframes sheet{from{opacity:0;transform:translateY(22px) scale(.985)}to{opacity:1;transform:none}}
+
+/* Search button: a quiet pulse while the answer is in flight. */
+#go.busy{animation:pulse 1.15s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55;transform:scale(.94)}}
+
+/* ── Ingest progress rail ──────────────────────────────────────────────────
+ * The pipeline stage a video is in, drawn INSIDE its chip: a determinate fill
+ * when the worker reports progress, a sweep while it's between stages.       */
+.rail{position:absolute;left:0;bottom:0;height:2px;background:#FF5A3C;transition:width .6s ease}
+.rail.indet{width:38%;animation:sweep 1.6s ease-in-out infinite}
+@keyframes sweep{0%{transform:translateX(-100%)}100%{transform:translateX(265%)}}
+.chip.working{border-color:rgba(255,90,60,.45)}
+
+/* ── Reduced motion ────────────────────────────────────────────────────────
+ * Everything above is decoration; none of it carries meaning that survives
+ * only in the movement. So: land on the final frame immediately.            */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:1ms!important;animation-iteration-count:1!important;
+    transition-duration:1ms!important;scroll-behavior:auto!important}
+  .word,.rise{opacity:1}
+  .mark path{stroke-dashoffset:0}
+}
+
+/* ---- Synced transcript panel (the player modal) ---- */
+.tline{display:block;width:100%;text-align:left;border-radius:.5rem;padding:.4rem .55rem;
+  margin-bottom:2px;line-height:1.4;font-size:.8rem;color:#5b6169;cursor:pointer;
+  transition:background .12s,color .12s;}
+.tline:hover{background:rgba(0,0,0,.05);}
+.tline .ts{display:inline-block;min-width:38px;font-variant-numeric:tabular-nums;
+  font-size:.68rem;color:#9aa0a6;margin-right:.45rem;}
+.tline.active{background:rgba(226,104,60,.12);color:#1a1a1a;}
+.tline.active .ts{color:#e2683c;font-weight:600;}

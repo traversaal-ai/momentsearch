@@ -5,6 +5,8 @@ Two routers on one FastAPI app (:8000):
                                         ingest status (Bearer auth)
   - src/api/search.py  public         — / (web UI), /api/ask, /api/config,
                                         local-dev media, /api/health
+plus /ui/* — the UI's static stylesheet and script (index.html is rendered by
+search.py, which injects the page mode into it).
 
 Heavy processing never happens here — the videos router only schedules Prefect
 flow runs; worker.py (separate process, same image) executes the ingest
@@ -19,9 +21,12 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from . import config, db
-from .api.search import router as search_router
+from .api.auth import router as auth_router
+from .api.search import UI_DIR, router as search_router
+from .api.sessions import router as sessions_router
 from .api.videos import router as videos_router
 from .rag import vector_store
 
@@ -42,5 +47,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MomentSearch", version="1.0.0", lifespan=lifespan)
+app.include_router(auth_router)
+app.include_router(sessions_router)
 app.include_router(videos_router)
 app.include_router(search_router)
+
+# The UI's stylesheet and script (ui/app.css, ui/app.js). index.html itself is
+# NOT served from here — search.py renders it so it can inject the page mode.
+# Still zero build step: these are plain files, and StaticFiles handles their
+# ETag/Last-Modified revalidation for us.
+if UI_DIR.is_dir():
+    app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")

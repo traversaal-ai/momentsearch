@@ -102,18 +102,21 @@ def _media_url(video: dict | None, user_id: str, video_id: str) -> str | None:
 
 def retrieve(question: str, user_id: str, *, top_k: int | None = None,
              video_id: str | None = None,
-             video_ids: list[str] | None = None) -> dict[str, Any]:
+             video_ids: list[str] | None = None,
+             include_samples: bool = True) -> dict[str, Any]:
     """Multimodal retrieve: query BOTH branches (CLIP frames + transcript text),
     fuse by RRF into time windows, and return numbered moment-citations.
 
     Returns {citations, best_visual, best_text} — the two raw bests feed the
     confidence gate (RRF scores are too small to threshold on). video_ids scopes
-    the search to chosen videos (UI select/unselect)."""
+    the search to chosen videos (UI select/unselect); include_samples keeps the
+    shared sample corpus searchable from any workspace."""
     k = top_k or TOP_K
 
     # Visual branch — CLIP text→image.
     vhits = vector_store.search(embed_text(question), user_id, top_k=BRANCH_TOP_K,
-                                video_id=video_id, video_ids=video_ids)
+                                video_id=video_id, video_ids=video_ids,
+                                include_samples=include_samples)
     best_visual = vhits[0]["score"] if vhits else 0.0
 
     # Text branch — bge query→transcript-chunk (only if transcript is enabled).
@@ -122,7 +125,8 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
     if config.ENABLE_TRANSCRIPT:
         thits = vector_store.search_text(embed_query(question), user_id,
                                          top_k=BRANCH_TOP_K, video_id=video_id,
-                                         video_ids=video_ids)
+                                         video_ids=video_ids,
+                                         include_samples=include_samples)
         best_text = thits[0]["score"] if thits else 0.0
 
     windows = _fuse(vhits, thits)[:k]
@@ -136,17 +140,21 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
         # seek); otherwise the transcript chunk's start.
         ms = int(fr["ms"]) if fr else int(w["t"] * 1000)
         idx = int(fr["idx"]) if fr else None
+        # Frames and uploads live under the OWNING tenant's key prefix, which
+        # isn't the asker for a shared sample — take it from the hit's payload.
+        owner = (fr or tx or {}).get("user_id") or user_id
         citations.append({
             "n": i,
             "video_id": vid,
+            "owner": owner,
             "title": (meta or {}).get("title") or vid,
             "url": (meta or {}).get("url"),
             "source": (meta or {}).get("source"),
             "ms": ms,
             "timestamp": _seconds(ms),
             "idx": idx,
-            "thumbnail": _thumb_url(user_id, vid, idx) if idx is not None else None,
-            "media_url": _media_url(meta, user_id, vid),
+            "thumbnail": _thumb_url(owner, vid, idx) if idx is not None else None,
+            "media_url": _media_url(meta, owner, vid),
             "deeplink": _deeplink(meta, vid, ms),
             "score": round(w["rrf"], 4),
             "transcript": (tx or {}).get("text"),
@@ -186,7 +194,10 @@ def _build_moments(user_id: str, citations: list[dict[str, Any]]) -> list[dict]:
         if c.get("idx") is None:
             return None
         try:
-            return storage.get_bytes(storage.frame_key(user_id, c["video_id"], c["idx"]))
+            # c["owner"], not the asker: a shared sample's frames sit under the
+            # tenant that ingested it.
+            owner = c.get("owner") or user_id
+            return storage.get_bytes(storage.frame_key(owner, c["video_id"], c["idx"]))
         except Exception:
             return None
 

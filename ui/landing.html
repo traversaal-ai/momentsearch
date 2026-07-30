@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MomentSearch — search inside video by what's on screen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    colors: { paper:"#FBF7F0", paper2:"#F3ECE0", card:"#FFFFFF", ink:"#1E1B16",
+              muted:"#6B6357", line:"#E7DECF", coral:"#FF5A3C", coral2:"#E8472B" },
+    fontFamily: { serif:['Fraunces','Georgia','serif'], sans:['Inter','system-ui','sans-serif'] },
+  }}}
+</script>
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body class="min-h-screen bg-paper text-ink flex flex-col">
+
+<div class="grain" aria-hidden="true"></div>
+
+<header class="border-b border-line">
+  <div class="max-w-5xl mx-auto px-6 py-4 flex items-center gap-3">
+    <span class="w-8 h-8 rounded-lg bg-coral flex items-center justify-center text-white font-bold display">M</span>
+    <span class="font-bold tracking-tight">MomentSearch</span>
+    <a href="https://github.com/traversaal-ai/momentsearch"
+       class="ml-auto text-xs text-muted hover:text-ink">GitHub ↗</a>
+    <a id="navAuth" href="/signin" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-ink text-white hover:bg-black transition">Sign in</a>
+  </div>
+</header>
+
+<main class="flex-1 max-w-5xl w-full mx-auto px-6 flex flex-col justify-center py-16">
+
+  <div class="text-center">
+    <div class="rise inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-7" style="--d:0">
+      ● Open source · CLIP + Qdrant + bring-your-own-LLM
+    </div>
+    <h1 id="heroTitle" class="display text-5xl sm:text-6xl font-bold leading-[1.08] tracking-tight"></h1>
+    <p class="rise mt-6 text-[18px] text-muted leading-relaxed mx-auto max-w-xl" style="--d:6">
+      Ask a question and get the exact second it happens — matched on what's
+      <b class="text-ink font-600">shown on screen</b>, not just what's said.
+    </p>
+
+    <!-- the two doors -->
+    <div class="rise mt-9 flex flex-wrap gap-3 justify-center" style="--d:8">
+      <a href="/demo" class="bg-coral hover:bg-coral2 text-white font-semibold rounded-xl px-7 py-3.5 transition shadow-sm">
+        Try the demo →
+      </a>
+      <a id="signInLink" href="/signin" class="bg-card border border-line hover:border-coral text-ink font-semibold rounded-xl px-7 py-3.5 transition">
+        Sign in
+      </a>
+    </div>
+    <p id="doorNote" class="rise mt-4 text-xs text-muted" style="--d:10">
+      The demo searches four pre-indexed talks — no sign-up. Sign in to add your own videos.
+    </p>
+  </div>
+
+  <!-- three steps -->
+  <div class="rise mt-20 grid sm:grid-cols-3 gap-5" style="--d:12">
+    <div class="bg-card border border-line rounded-2xl p-5">
+      <div class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 text-xs font-bold flex items-center justify-center display">1</div>
+      <h3 class="display text-lg font-600 mt-3">Add a video</h3>
+      <p class="text-sm text-muted leading-relaxed mt-1">
+        Paste a YouTube link or upload a file. It goes into whichever session you're working in.
+      </p>
+    </div>
+    <div class="bg-card border border-line rounded-2xl p-5">
+      <div class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 text-xs font-bold flex items-center justify-center display">2</div>
+      <h3 class="display text-lg font-600 mt-3">It watches and listens</h3>
+      <p class="text-sm text-muted leading-relaxed mt-1">
+        Frames are sampled and embedded with CLIP; captions are chunked and embedded too. Two ways in.
+      </p>
+    </div>
+    <div class="bg-card border border-line rounded-2xl p-5">
+      <div class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 text-xs font-bold flex items-center justify-center display">3</div>
+      <h3 class="display text-lg font-600 mt-3">Ask, then watch</h3>
+      <p class="text-sm text-muted leading-relaxed mt-1">
+        You get a cited answer. Click any citation and that exact moment plays.
+      </p>
+    </div>
+  </div>
+</main>
+
+<footer class="border-t border-line">
+  <div class="max-w-5xl mx-auto px-6 py-6 text-xs text-muted flex justify-between flex-wrap gap-2">
+    <span>Apache 2.0 · frames + transcript, fused by rank</span>
+    <span><a class="hover:text-ink" href="https://momentsearch.vercel.app/">momentsearch.vercel.app</a></span>
+  </div>
+</footer>
+
+<script src="/ui/common.js"></script>
+<script>
+  /* Headline word-by-word, with the coral word underlining itself. */
+  const UNDERLINE = `<svg viewBox="0 0 320 14" preserveAspectRatio="none"><path d="M4 9C70 3 154 2 316 6"/></svg>`;
+  const PARTS=[{text:"Find the exact"},{text:"moment",coral:true},{text:"in any video."}];
+  let i=0;
+  $("#heroTitle").innerHTML = PARTS.map(p=>p.text.split(" ").map(w=>{
+    const inner = p.coral ? `<span class="mark text-coral">${esc(w)}${UNDERLINE}</span>` : esc(w);
+    return `<span class="word" style="--i:${i++}">${inner}</span>`;
+  }).join(" ")).join(" ");
+
+  wireNav();   // header top-right: "Sign in" or, when signed in, "Workspace →"
+
+  /* Already signed in? Then this door says so. */
+  if(SIGNED()){
+    const a=$("#signInLink");
+    a.href="/app"; a.textContent="Open your workspace →";
+    a.className="bg-ink hover:bg-black text-white font-semibold rounded-xl px-7 py-3.5 transition";
+    $("#doorNote").innerHTML=`Signed in as <b class="text-ink">${esc(SESSION.email)}</b>.`;
+  }
+</script>
+</body>
+</html>

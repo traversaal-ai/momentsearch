@@ -16,6 +16,7 @@ services:
     command: uvicorn src.clip_service:app --host 0.0.0.0 --port 8001
     env_file: .env
     volumes:
+      - ./src:/app/src            # live code — restart clip to pick up changes
       - hf_cache:/root/.cache     # model weights cached across restarts
     restart: unless-stopped
 
@@ -32,6 +33,7 @@ services:
     environment:
       CLIP_SERVICE_URL: ${CLIP_SERVICE_URL:-http://clip:8001}
     volumes:
+      - ./src:/app/src            # live code — re-runs current seed logic on each `up`
       - ./data:/app/data
       - hf_cache:/root/.cache
     depends_on:
@@ -40,12 +42,16 @@ services:
 
   api:
     build: .
+    # --reload: edits to src/ hot-reload the API; edits to ui/ show on refresh.
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     env_file: .env
     environment:
       CLIP_SERVICE_URL: ${CLIP_SERVICE_URL:-http://clip:8001}
     volumes:
+      - ./src:/app/src            # live code — no rebuild for Python changes
+      - ./ui:/app/ui              # live UI — edit app.js/app.css/index.html, just refresh
       - ./data:/app/data          # STORAGE_PROVIDER=local only (dev)
       - hf_cache:/root/.cache
     depends_on:
@@ -66,6 +72,7 @@ services:
       # (download + ffmpeg only) — raise this without adding RAM for models.
       WORKER_CONCURRENCY: 2
     volumes:
+      - ./src:/app/src            # live code — restart the worker to pick up changes
       - ./data:/app/data
       - hf_cache:/root/.cache
     depends_on:

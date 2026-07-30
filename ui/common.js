@@ -1,0 +1,257 @@
+/* Shared by every MomentSearch page: identity, API calls, markdown, moment
+ * cards and the player modal. No build step — plain <script> before the page's
+ * own script.
+ */
+const $=s=>document.querySelector(s);
+const $$=s=>Array.from(document.querySelectorAll(s));
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------- identity ----------
+   Sign-in trades an email for a workspace id + an HMAC-signed token
+   (src/api/auth.py). Both travel on every call; the server derives the tenant
+   from the SIGNATURE, so the id in the header can't be swapped for another. */
+const STORE="ms_session";
+let SESSION=null;
+try{ SESSION=JSON.parse(localStorage.getItem(STORE)||"null"); }catch{ SESSION=null; }
+const SIGNED = ()=> !!(SESSION && SESSION.token);
+function saveSession(s){
+  SESSION=s;
+  if(s) localStorage.setItem(STORE, JSON.stringify(s)); else localStorage.removeItem(STORE);
+}
+function signOut(){ saveSession(null); location.href="/"; }
+
+/* ---------- top-nav auth affordance ----------
+   Every page's header carries one #navAuth link so the top-right is consistent
+   across the whole flow: signed out it points to /signin ("Sign in"); signed in
+   it points to the workspace ("Workspace →") and names the account. Call once
+   after the DOM's header exists. */
+function wireNav(){
+  const a=$("#navAuth"); if(!a) return;
+  if(SIGNED()){
+    a.href="/app"; a.textContent="Workspace →";
+    a.title="Signed in as "+(SESSION.email||"");
+  }else{
+    a.href="/signin"; a.textContent="Sign in"; a.title="";
+  }
+}
+
+/* Never call fetch() on our own API directly — this is what carries the session. */
+function api(path, opts={}){
+  const headers=Object.assign({}, opts.headers||{});
+  if(SIGNED()){
+    headers["X-User-Id"]=SESSION.user_id;
+    headers["Authorization"]="Bearer "+SESSION.token;
+  }
+  return fetch(path, Object.assign({}, opts, {headers}));
+}
+async function apiJSON(path, opts){
+  const r=await api(path, opts);
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.detail || r.statusText || "Request failed");
+  return d;
+}
+
+/* ---------- markdown (bold, code, bullets, [n] citation pills) ---------- */
+function mdInline(t){
+  t=esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+?)`/g,'<code class="px-1 rounded bg-paper2 text-[13px]">$1</code>');
+  return t.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g,(_,g)=>g.split(/\s*,\s*/).map(n=>
+    `<span class="cite" data-n="${n.trim()}" title="Play this moment">${n.trim()}</span>`).join(''));
+}
+function renderMarkdown(md){
+  const lines=(md||"").split(/\n/); let html="",inUl=false;
+  const closeUl=()=>{if(inUl){html+="</ul>";inUl=false;}};
+  for(const raw of lines){ const l=raw.trim();
+    if(/^[-*]\s+/.test(l)){ if(!inUl){html+="<ul>";inUl=true;} html+=`<li>${mdInline(l.replace(/^[-*]\s+/,''))}</li>`; }
+    else { closeUl(); if(l) html+=`<p class="mb-3">${mdInline(l)}</p>`; } }
+  closeUl(); return html;
+}
+
+/* ---------- moment cards ---------- */
+function ytIdOf(c){
+  if(c.video_id && c.video_id.startsWith("yt_")) return c.video_id.slice(3);
+  const m=(c.url||"").match(/(?:youtu\.be\/|v=)([\w-]{11})/); return m?m[1]:null;
+}
+function modTags(mods){
+  return (mods||[]).map(m=>m==="frame"
+    ? '<span class="text-[9px] px-1 rounded bg-coral/15 text-coral2">seen</span>'
+    : '<span class="text-[9px] px-1 rounded bg-[#cfe8d6] text-[#1f7a43]">said</span>').join(" ");
+}
+/* Text-only moments have no frame; they're always YouTube, so fall back to the
+   video's thumbnail rather than showing an empty box. */
+function thumbOf(c){
+  const yid=ytIdOf(c);
+  return c.thumbnail || (yid ? `https://img.youtube.com/vi/${yid}/hqdefault.jpg` : null);
+}
+function momentCard(c, i){
+  const img=thumbOf(c);
+  const thumb = img
+    ? `<img loading="lazy" src="${esc(img)}" class="w-full h-full object-cover" onerror="this.style.opacity=0">`
+    : `<div class="w-full h-full flex items-center justify-center text-muted text-xs p-2 text-center">transcript moment<br>(no frame)</div>`;
+  const quote = c.transcript
+    ? `<div class="text-[11px] text-muted italic mt-1 line-clamp-2">“${esc(c.transcript)}”</div>` : "";
+  return `
+  <button class="source pop text-left bg-card border border-line rounded-2xl overflow-hidden shadow-sm hover:border-coral transition" data-n="${c.n}" style="--i:${i||0}">
+    <div class="aspect-video bg-paper2 overflow-hidden">${thumb}</div>
+    <div class="p-3">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-[10px] font-bold text-white bg-coral rounded px-1.5 py-0.5">${c.n}</span>
+        <span class="text-[11px] text-muted">${esc(c.timestamp)}</span>
+        ${modTags(c.modalities)}
+        <span class="text-[11px] text-muted ml-auto">score ${c.score}</span>
+      </div>
+      <div class="text-[12px] font-600 leading-snug line-clamp-2">${esc(c.title||c.video_id)}</div>
+      ${quote}
+    </div>
+  </button>`;
+}
+
+/* ---------- player modal + synced transcript ----------
+   openMoment(list, n) — click a card or a [n] pill; the moment opens seeked.
+   YouTube plays through the IFrame Player API (so JS can seek AND read the
+   current time — that's what moves the transcript); uploads through <video>.
+   The full transcript comes from /api/transcript (durable GCP copy): every line
+   is click-to-seek, and the line at the current time highlights + auto-scrolls. */
+let MODAL_LIST=[];
+let YTP=null, VIDEOEL=null, SYNC=null, CUES=[], ACTIVELINE=-1, _ytApiP=null;
+
+function ytApi(){                                   // load the IFrame API once
+  if(window.YT && window.YT.Player) return Promise.resolve(window.YT);
+  if(_ytApiP) return _ytApiP;
+  _ytApiP=new Promise(res=>{
+    const prev=window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady=()=>{ if(prev)prev(); res(window.YT); };
+    const s=document.createElement("script"); s.src="https://www.youtube.com/iframe_api";
+    document.head.appendChild(s);
+  });
+  return _ytApiP;
+}
+function fmtT(s){ s=Math.max(0,Math.floor(s||0)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`; }
+function stopSync(){ if(SYNC){ clearInterval(SYNC); SYNC=null; } }
+function teardownPlayer(){
+  stopSync();
+  try{ if(YTP&&YTP.destroy) YTP.destroy(); }catch(e){}
+  YTP=null; VIDEOEL=null; CUES=[]; ACTIVELINE=-1;
+  const box=$("#playerBox"); if(box) box.innerHTML="";
+  const p=$("#transcriptPanel"); if(p) p.innerHTML="";
+}
+function seekTo(t){
+  const s=Math.floor(t);
+  if(YTP&&YTP.seekTo){ YTP.seekTo(s,true); if(YTP.playVideo) YTP.playVideo(); }
+  else if(VIDEOEL){ try{ VIDEOEL.currentTime=s; if(VIDEOEL.play) VIDEOEL.play(); }catch(e){} }
+}
+function highlightAt(t){                            // move the transcript with time
+  if(!CUES.length) return;
+  let idx=-1;
+  for(let i=0;i<CUES.length;i++){ if(t >= (CUES[i].t_start||0)-0.05) idx=i; else break; }
+  if(idx===ACTIVELINE) return;
+  ACTIVELINE=idx;
+  const lines=$$("#transcriptPanel .tline");
+  lines.forEach((el,i)=>el.classList.toggle("active", i===idx));
+  if(idx>=0 && lines[idx]) lines[idx].scrollIntoView({block:"nearest", behavior:"smooth"});
+}
+async function loadTranscript(c, secs){             // GCP-only; no transcript -> hide panel
+  const panel=$("#transcriptPanel"), wrap=$("#transcriptWrap");
+  if(!panel || !wrap) return;
+  CUES=[]; ACTIVELINE=-1;
+  panel.innerHTML=`<div class="p-3 text-xs text-muted">Loading transcript…</div>`;
+  try{
+    const r=await api(`/api/transcript/${encodeURIComponent(c.video_id)}`);
+    if(!r.ok) throw new Error("no transcript");
+    CUES=(await r.json()).chunks||[];
+  }catch(e){ CUES=[]; }
+  if(!CUES.length){ wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  panel.innerHTML=CUES.map(cu=>
+    `<button class="tline" data-t="${cu.t_start||0}"><span class="ts">${fmtT(cu.t_start)}</span>${esc(cu.text||"")}</button>`
+  ).join("");
+  $$("#transcriptPanel .tline").forEach(el=>el.onclick=()=>seekTo(+el.dataset.t));
+  highlightAt(secs);
+}
+
+function openMoment(list, n){
+  MODAL_LIST=list||[];
+  const c=MODAL_LIST.find(x=>x.n===n); if(!c) return;
+  const secs=Math.floor((c.ms||0)/1000);
+  $("#mTitle").textContent=c.title||c.video_id;
+  $("#mMeta").textContent = c.transcript ? `“${c.transcript}”` : `Moment at ${c.timestamp}`;
+  const preview=thumbOf(c);
+  $("#mFrame").style.display = preview ? "" : "none";
+  if(preview) $("#mFrame").src=preview;
+  const isFrame=!!c.thumbnail;
+  $("#mFrameLabel").textContent = isFrame ? "Matched frame" : "Matched on transcript";
+  $("#mFrameDesc").textContent = isFrame
+    ? "This is what CLIP matched your question against — the still it judged closest to what you asked."
+    : "This moment matched on what was said (transcript). Shown is the video’s thumbnail — press play to jump to the exact spot.";
+  $("#mOut").href=c.deeplink||"#";
+
+  teardownPlayer();
+  $("#modal").classList.remove("hidden");
+  document.body.style.overflow="hidden";
+  const box=$("#playerBox"), yid=ytIdOf(c);
+  if(yid){
+    box.innerHTML=`<div id="ytplayer" class="w-full h-full"></div>`;
+    ytApi().then(YT=>{
+      YTP=new YT.Player("ytplayer",{
+        videoId:yid,
+        playerVars:{start:secs, autoplay:1, rel:0, modestbranding:1, playsinline:1},
+        events:{ onReady:e=>{
+          try{ e.target.seekTo(secs,true); e.target.playVideo(); }catch(_){}
+          stopSync(); SYNC=setInterval(()=>{ try{ highlightAt(YTP.getCurrentTime()); }catch(_){} }, 500);
+        } }
+      });
+    });
+  } else {
+    box.innerHTML=`<video class="w-full h-full" controls autoplay playsinline src="${esc(c.media_url||('/api/video/'+c.video_id))}"></video>`;
+    VIDEOEL=box.querySelector("video");
+    const seek=()=>{ try{VIDEOEL.currentTime=secs;}catch(e){} };
+    if(VIDEOEL.readyState>=1) seek(); else VIDEOEL.addEventListener("loadedmetadata",seek,{once:true});
+    VIDEOEL.addEventListener("timeupdate",()=>highlightAt(VIDEOEL.currentTime));
+  }
+  loadTranscript(c, secs);
+}
+function closeModal(){
+  teardownPlayer();
+  const m=$("#modal"); if(m) m.classList.add("hidden");
+  document.body.style.overflow="";
+}
+function wireModal(){
+  if(!$("#modal")) return;
+  $("#mClose").onclick=closeModal;
+  $("#modal").onclick=e=>{ if(e.target.id==="modal") closeModal(); };
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeModal(); });
+}
+
+/* ---------- video status ---------- */
+const INFLIGHT=["pending","queued","fetching","sampling","embedding"];
+function statusBadge(v){
+  const src = v.is_sample ? "sample" : (v.source==="youtube" ? "YouTube" : "upload");
+  const pct = v.progress ? ` ${Math.round(v.progress*100)}%` : "";
+  switch(v.status){
+    case "indexed":   return {icon:"✓", label:`${v.frame_count||0} frames · ${src}`, c:"text-[#1f7a43]"};
+    case "pending":   return {icon:"◷", label:"waiting (fair queue)", c:"text-[#8a6d1a]"};
+    case "queued":    return {icon:"◷", label:"queued",              c:"text-[#8a6d1a]"};
+    case "fetching":  return {icon:"⏬", label:"fetching video…",     c:"text-[#8a6d1a]"};
+    case "sampling":  return {icon:"⏳", label:"sampling"+pct,        c:"text-[#8a6d1a]"};
+    case "embedding": return {icon:"⏳", label:"embedding"+pct,       c:"text-[#8a6d1a]"};
+    case "failed":    return {icon:"⚠", label:"failed",              c:"text-coral2"};
+    case "skipped":   return {icon:"⊘", label:"duplicate",           c:"text-muted"};
+    default:          return {icon:"•", label:v.status,              c:"text-muted"};
+  }
+}
+
+/* Upload straight to the bucket with real byte progress. XHR, not fetch: fetch
+   can't report upload progress. Plain request — our session headers are not
+   part of what the presigned URL was signed for. */
+function putWithProgress(url, headers, file, onPct){
+  return new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    xhr.open("PUT", url, true);
+    Object.entries(headers||{}).forEach(([k,v])=>xhr.setRequestHeader(k,v));
+    xhr.upload.onprogress=e=>{ if(e.lengthComputable && onPct) onPct(e.loaded/e.total); };
+    xhr.onload=()=> (xhr.status>=200 && xhr.status<300)
+      ? resolve() : reject(new Error(`upload failed (${xhr.status})`));
+    xhr.onerror=()=>reject(new Error("upload failed — network error"));
+    xhr.send(file);
+  });
+}

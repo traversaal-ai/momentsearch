@@ -54,6 +54,13 @@ def frame_prefix(user_id: str, video_id: str) -> str:
     return f"{FRAME_KEY_PREFIX}{user_id}/{video_id}/"
 
 
+def transcript_key(user_id: str, video_id: str) -> str:
+    """Durable copy of a video's timed transcript (JSON: [{text,t_start,t_end}]).
+    Lets us re-embed transcripts (e.g. on a text-model swap) without re-fetching
+    captions from YouTube — the same reason akash persists its transcripts."""
+    return f"transcripts/{user_id}/{video_id}.json"
+
+
 def _s3():
     global _client
     if _client is None:

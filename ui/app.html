@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Workspace · MomentSearch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    colors: { paper:"#FBF7F0", paper2:"#F3ECE0", card:"#FFFFFF", ink:"#1E1B16",
+              muted:"#6B6357", line:"#E7DECF", coral:"#FF5A3C", coral2:"#E8472B" },
+    fontFamily: { serif:['Fraunces','Georgia','serif'], sans:['Inter','system-ui','sans-serif'] },
+  }}}
+</script>
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body class="h-screen bg-paper text-ink flex flex-col overflow-hidden" data-pane="chat">
+
+<div class="grain" aria-hidden="true"></div>
+
+<!-- HEADER -->
+<header class="border-b border-line shrink-0">
+  <div class="px-4 sm:px-6 py-3 flex items-center gap-3">
+    <a href="/" class="flex items-center gap-1 text-sm text-muted hover:text-ink shrink-0" title="Back to home">
+      <span aria-hidden="true">←</span><span class="hidden sm:inline">Home</span>
+    </a>
+    <span class="w-px h-5 bg-line shrink-0" aria-hidden="true"></span>
+    <a href="/" class="flex items-center gap-2.5">
+      <span class="w-7 h-7 rounded-lg bg-coral flex items-center justify-center text-white font-bold display text-sm">M</span>
+      <span class="font-bold tracking-tight text-[15px] hidden sm:inline">MomentSearch</span>
+    </a>
+
+    <!-- pane switcher (phones/tablets; the three columns show side by side on xl) -->
+    <div class="flex gap-1 ml-2 xl:hidden">
+      <button class="paneTab tab" data-pane="sessions">Sessions</button>
+      <button class="paneTab tab active" data-pane="chat">Playground</button>
+      <button class="paneTab tab" data-pane="videos">Videos</button>
+    </div>
+
+    <span id="llmBadge" class="ml-auto text-xs px-3 py-1 rounded-full border border-line text-muted hidden sm:inline">checking…</span>
+    <span id="avatar" class="w-7 h-7 rounded-full bg-coral/15 border border-coral/35 text-coral2 text-xs font-bold flex items-center justify-center shrink-0"></span>
+    <span id="whoEmail" class="text-xs text-muted hidden md:inline"></span>
+    <button id="signOutBtn" class="text-xs text-muted hover:text-coral2 underline decoration-line">Sign out</button>
+  </div>
+</header>
+
+<div class="flex-1 flex min-h-0">
+
+  <!-- ── SESSIONS ─────────────────────────────────────────────────────────── -->
+  <aside id="paneSessions" class="pane w-full xl:w-64 xl:shrink-0 border-r border-line flex flex-col min-h-0 bg-paper">
+    <div class="p-3 shrink-0">
+      <button id="newSession" class="w-full bg-ink hover:bg-black text-white text-sm font-semibold rounded-xl px-4 py-2.5 transition">
+        + New session
+      </button>
+    </div>
+    <div id="sessionList" class="flex-1 overflow-y-auto px-3 pb-3 space-y-1"></div>
+    <div class="p-3 border-t border-line shrink-0 text-[11px] text-muted leading-relaxed">
+      A session holds its own videos and its own chat. New sessions start empty.
+    </div>
+  </aside>
+
+  <!-- ── PLAYGROUND (chat) ────────────────────────────────────────────────── -->
+  <section id="paneChat" class="pane flex-1 flex flex-col min-h-0 min-w-0">
+    <div class="px-5 py-3 border-b border-line flex items-center gap-3 shrink-0">
+      <div class="min-w-0">
+        <h1 id="sessTitle" class="display text-lg font-600 truncate">…</h1>
+        <div id="sessMeta" class="text-[11px] text-muted"></div>
+      </div>
+      <div class="ml-auto flex gap-1 shrink-0">
+        <button id="renameSession" class="w-8 h-8 rounded-lg border border-line text-muted hover:border-coral hover:text-coral2 transition" title="Rename session">✎</button>
+        <button id="deleteSession" class="w-8 h-8 rounded-lg border border-line text-muted hover:border-coral hover:text-coral2 transition" title="Delete session">🗑</button>
+      </div>
+    </div>
+
+    <div id="chat" class="flex-1 overflow-y-auto px-5 py-6 space-y-6"></div>
+
+    <div class="border-t border-line p-4 shrink-0">
+      <div class="flex items-end gap-2 bg-white border border-line rounded-2xl shadow-sm px-3 py-2.5 focus-within:border-coral focus-within:ring-4 focus-within:ring-coral/15 transition max-w-3xl mx-auto">
+        <div class="relative flex-1">
+          <textarea id="q" rows="1" aria-label="Ask about the videos in this session"
+            class="relative z-10 w-full bg-transparent outline-none resize-none text-[15px] leading-relaxed px-2 py-2"></textarea>
+          <div id="ghost" class="ghost px-2 py-2 text-[15px] leading-relaxed">Ask about the videos in this session…</div>
+        </div>
+        <button id="go" aria-label="Send"
+          class="shrink-0 w-9 h-9 rounded-xl bg-coral hover:bg-coral2 text-white flex items-center justify-center transition">→</button>
+      </div>
+      <p class="text-[10.5px] text-muted text-center mt-2">
+        Each question is searched on its own — history is shown, not sent to the model.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── VIDEOS IN THIS SESSION ───────────────────────────────────────────── -->
+  <aside id="paneVideos" class="pane w-full xl:w-80 xl:shrink-0 border-l border-line flex flex-col min-h-0 bg-paper">
+    <div class="px-4 py-3 border-b border-line shrink-0">
+      <h2 class="display text-base font-600">Videos in this session</h2>
+      <p id="vidNote" class="text-[11px] text-muted mt-0.5"></p>
+    </div>
+
+    <div class="p-4 space-y-3 shrink-0 border-b border-line">
+      <!-- YouTube -->
+      <div class="flex gap-2">
+        <input id="ytUrl" type="text" placeholder="Paste a YouTube URL"
+          class="flex-1 min-w-0 bg-white border border-line rounded-xl px-3 py-2 text-[13px] outline-none focus:border-coral">
+        <button id="ytBtn" class="bg-ink hover:bg-black text-white text-[13px] font-semibold rounded-xl px-3 transition">Add</button>
+      </div>
+      <!-- Upload: click or drop -->
+      <label id="drop" class="block border border-dashed border-line rounded-xl px-4 py-5 text-center cursor-pointer hover:border-coral transition">
+        <input id="upFile" type="file" accept="video/*" class="hidden" multiple>
+        <span class="text-[13px] text-muted">
+          <b class="text-ink">Drop a video</b> or click to choose<br>
+          <span class="text-[11px]" id="upLimit"></span>
+        </span>
+      </label>
+      <div id="upList" class="space-y-2"></div>
+      <div id="ingestStatus" class="text-[12px] text-muted min-h-[16px]"></div>
+    </div>
+
+    <div id="sessVideos" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
+  </aside>
+</div>
+
+<!-- PLAYER MODAL -->
+<div id="modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+  <div class="bg-card w-full max-w-5xl rounded-2xl overflow-hidden shadow-2xl max-h-[92vh] flex flex-col fade-in">
+    <div class="flex items-start justify-between gap-3 px-4 py-2.5 border-b border-line">
+      <div class="min-w-0">
+        <div id="mTitle" class="text-sm font-semibold leading-snug truncate">Moment</div>
+        <div id="mMeta" class="text-xs text-muted mt-0.5"></div>
+      </div>
+      <button id="mClose" class="shrink-0 w-8 h-8 rounded-full hover:bg-paper2 flex items-center justify-center text-muted text-lg">✕</button>
+    </div>
+    <div class="flex flex-col md:flex-row min-h-0 flex-1 overflow-hidden">
+      <div class="md:flex-1 flex flex-col min-w-0">
+        <div id="playerBox" class="bg-black aspect-video shrink-0"></div>
+        <div class="flex items-center gap-3 px-4 py-3 border-t border-line">
+          <img id="mFrame" class="w-24 aspect-video object-cover rounded-lg border border-line bg-paper2" alt="matched frame">
+          <div class="text-xs text-muted">
+            <div id="mFrameLabel" class="font-semibold text-ink mb-0.5">Matched frame</div>
+            <span id="mFrameDesc"></span>
+            <a id="mOut" href="#" target="_blank" class="text-coral2 font-semibold hover:text-coral block mt-1">Open on source ↗</a>
+          </div>
+        </div>
+      </div>
+      <!-- Synced transcript: active line follows playback, click a line to jump -->
+      <div id="transcriptWrap" class="md:w-80 shrink-0 border-t md:border-t-0 md:border-l border-line flex flex-col min-h-0">
+        <div class="px-4 py-2 text-[11px] uppercase tracking-wider text-muted font-semibold border-b border-line shrink-0">Transcript · click a line to jump</div>
+        <div id="transcriptPanel" class="overflow-y-auto p-2 grow min-h-[120px] max-h-[40vh] md:max-h-none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/ui/common.js"></script>
+<script src="/ui/workspace.js"></script>
+</body>
+</html>

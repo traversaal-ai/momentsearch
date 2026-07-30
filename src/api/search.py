@@ -11,11 +11,14 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
+                               StreamingResponse)
 from pydantic import BaseModel
 
 from .. import config, db, llm, storage
+from ..providers import status as provider_status
 from ..rag import search as rag_search
+from ..samples import is_sample
 from .videos import require_auth, user_id as user_id_dep
 
 router = APIRouter(tags=["search"])
@@ -40,13 +43,20 @@ def health():
 
 
 @router.get("/api/config")
-def get_config(x_user_id: str | None = Header(default=None)):
-    cfg, source = rag_search.resolve_llm(_uid(x_user_id))
+def get_config(uid: str = Depends(user_id_dep)):
+    cfg, source = rag_search.resolve_llm(uid)
+    embeddings = provider_status.active()["embeddings"]
     return {
         "llm_configured": cfg is not None,
         "llm_source": source,   # "user" (their hosted model) | "server" | "none"
         "llm_provider": cfg.provider if cfg else None,
         "llm_model": cfg.model if cfg else None,
+        # Which embedders are actually behind retrieval — the two branches are
+        # configured independently and can come from different providers.
+        "image_embed_provider": embeddings["image"]["provider"],
+        "image_embed_model": embeddings["image"]["model"],
+        "text_embed_provider": embeddings["text"]["provider"],
+        "text_embed_model": embeddings["text"]["model"],
         "frame_strategy": config.FRAME_STRATEGY,
         "top_k": config.TOP_K,
         "upload_mode": "presigned" if storage.presign_capable() else "direct",
@@ -54,38 +64,67 @@ def get_config(x_user_id: str | None = Header(default=None)):
     }
 
 
+@router.get("/api/providers")
+def get_providers():
+    """Every model provider this build supports, plus what's configured here.
+
+    Drives a provider picker in the settings UI (name, label, whether it needs
+    a key, whether its optional SDK is installed) and doubles as the answer to
+    "why isn't my key working?" — same data as `python -m src.providers`.
+    """
+    return provider_status.catalog()
+
+
 # ── Bring-your-own-model settings (per tenant) ────────────────────────────────
-# A user points MomentSearch at THEIR hosted model — a vLLM/Ollama/LM Studio/
-# Together/OpenRouter endpoint (OpenAI-compatible), NVIDIA NIM, or Anthropic —
-# and every /api/ask for that user answers with it instead of the server's LLM.
+# A user points MomentSearch at THEIR model — any provider in the registry
+# (OpenAI, Gemini, Anthropic, OpenRouter, xAI/Grok, Groq, Together, Fireworks,
+# Mistral, NVIDIA, Azure) or their own OpenAI-compatible server (vLLM, Ollama,
+# LM Studio) via base_url — and every /api/ask for that user answers with it
+# instead of the server's LLM.
 
 class LLMSettings(BaseModel):
-    provider: str = "openai"     # openai (any OpenAI-compatible) | nvidia | anthropic
-    model: str                   # e.g. "Qwen/Qwen2.5-VL-7B-Instruct" on vLLM
+    provider: str = "openai"     # any name/alias from GET /api/providers
+    model: str = ""              # blank = that provider's default model
     base_url: str | None = None  # e.g. "http://my-vllm-host:8000/v1"
     api_key: str | None = None   # empty keeps the previously stored key
 
 
-def _validate_llm(s: LLMSettings) -> LLMSettings:
-    if s.provider not in llm.PROVIDERS:
-        raise HTTPException(400, f"provider must be one of {llm.PROVIDERS}.")
-    if not s.model.strip():
-        raise HTTPException(400, "model is required.")
+def _validate_llm(s: LLMSettings, uid: str) -> LLMSettings:
+    """Reject what can't work, and fill in what the provider's preset knows.
+
+    Returns settings with the provider name canonicalized and the model
+    resolved, so what gets stored is what will actually run.
+    """
+    if not llm.is_provider(s.provider):
+        raise HTTPException(400, f"Unknown provider '{s.provider}'. Known: "
+                                 f"{', '.join(llm.PROVIDERS)} (see /api/providers).")
     url = (s.base_url or "").strip()
     if url and not (url.startswith("http://") or url.startswith("https://")):
         raise HTTPException(400, "base_url must be http(s).")
-    if s.provider == "openai" and not url and not (s.api_key or "").strip():
-        raise HTTPException(400, "Provide a base_url (your hosted endpoint) "
-                                 "and/or an api_key.")
-    return s
+    # An empty api_key means "keep the stored one", so validate against that.
+    stored = db.get_user_llm(uid) or {}
+    key = (s.api_key or "").strip() or (stored.get("api_key") or "")
+    cfg = llm.resolve(llm.LLMConfig(provider=s.provider, model=(s.model or "").strip(),
+                                    base_url=url, api_key=key))
+    problem = llm.missing_requirement(cfg)
+    if problem:
+        raise HTTPException(400, problem)
+    # base_url stays as the user gave it (blank = follow the preset, so a
+    # provider that moves its endpoint keeps working without a DB edit).
+    return LLMSettings(provider=cfg.provider, model=cfg.model,
+                       base_url=url or None, api_key=s.api_key)
 
 
 def _masked(row: dict) -> dict:
     key = row.get("api_key") or ""
+    cfg = llm.from_row(row)
     return {"provider": row["provider"], "model": row["model"],
             "base_url": row.get("base_url"),
             "api_key_set": bool(key),
             "api_key_hint": f"…{key[-4:]}" if key else None,
+            # What the provider's preset resolves to — the endpoint that will
+            # actually be called, and a human-readable provider name.
+            "label": cfg.label, "effective_base_url": cfg.base_url or None,
             "updated_at": row.get("updated_at")}
 
 
@@ -100,7 +139,7 @@ def get_llm(uid: str = Depends(user_id_dep)):
 
 @router.put("/api/llm", dependencies=[Depends(require_auth)])
 def put_llm(s: LLMSettings, uid: str = Depends(user_id_dep)):
-    s = _validate_llm(s)
+    s = _validate_llm(s, uid)
     row = db.set_user_llm(uid, provider=s.provider, model=s.model.strip(),
                           base_url=(s.base_url or "").strip() or None,
                           api_key=(s.api_key or "").strip())
@@ -137,15 +176,42 @@ class AskRequest(BaseModel):
 
 
 @router.post("/api/ask")
-def ask(req: AskRequest, x_user_id: str | None = Header(default=None)):
+def ask(req: AskRequest, uid: str = Depends(user_id_dep)):
     if not req.question.strip():
         raise HTTPException(400, "Empty question.")
     # Empty list == "nothing selected" -> treat as all (None); avoids a
     # confusing zero-results answer when the user unchecks everything.
     video_ids = req.video_ids or None
-    return rag_search.ask(req.question.strip(), _uid(x_user_id),
+    return rag_search.ask(req.question.strip(), uid,
                           top_k=req.top_k, video_id=req.video_id,
                           video_ids=video_ids)
+
+
+# ── Transcript (full timed transcript for the synced player panel) ───────────
+
+@router.get("/api/transcript/{video_id}")
+def transcript(video_id: str, uid: str = Depends(user_id_dep)):
+    """The full timed transcript `[{text, t_start, t_end}]` for the synced
+    transcript panel — served straight from the durable copy in object storage
+    (`transcripts/<owner>/<id>.json`). GCP-only: 404 when the video has no stored
+    transcript (an upload, a caption-less video, or a sample not yet re-seeded)."""
+    import json
+
+    row = db.get_video(video_id)
+    if row is None:
+        raise HTTPException(404, "Video not found.")
+    owner = row["user_id"]
+    if not is_sample(video_id) and owner != uid:
+        raise HTTPException(403, "Not your video.")
+    try:
+        raw = storage.get_bytes(storage.transcript_key(owner, video_id))
+    except Exception:
+        raise HTTPException(404, "No transcript stored for this video.")
+    try:
+        chunks = json.loads(raw)
+    except Exception:
+        raise HTTPException(500, "Stored transcript is unreadable.")
+    return {"video_id": video_id, "owner": owner, "chunks": chunks}
 
 
 # ── Media (local-dev only; buckets serve these via presigned URLs) ───────────
@@ -212,23 +278,45 @@ def video(video_id: str, u: str | None = None,
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 
-def _render(mode: str) -> str:
-    """Two modes of the single-page UI:
-      * "sample" (/)            — curated read-only demo
-      * "full"   (/get-started) — bring-your-own-videos (add URL / upload)
+def _page(name: str, mode: str = "") -> str:
+    """Serve one of the UI's pages, injecting its mode where the page wants it.
+
+    Four pages, each a plain file in ui/ (no build step — see app.py's /ui mount
+    for the shared stylesheet and scripts):
+      landing.html  /         what MomentSearch is; try the demo or sign in
+      demo.html     /demo     the shared sample corpus, open to anyone
+      signin.html   /signin   email -> workspace
+      app.html      /app      signed in: sessions, playground, uploads
     """
-    index = UI_DIR / "index.html"
-    if not index.exists():
-        return "<h1>MomentSearch</h1><p>ui/index.html not found.</p>"
-    html = index.read_text(encoding="utf-8")
+    page = UI_DIR / name
+    if not page.exists():
+        return f"<h1>MomentSearch</h1><p>ui/{name} not found.</p>"
+    html = page.read_text(encoding="utf-8")
     return html.replace("<!--MS_MODE-->", f'<script>window.MS_MODE="{mode}";</script>')
 
 
 @router.get("/", response_class=HTMLResponse)
 def index():
-    return _render("sample")
+    return _page("landing.html")
+
+
+@router.get("/demo", response_class=HTMLResponse)
+def demo():
+    return _page("demo.html", "sample")
+
+
+@router.get("/signin", response_class=HTMLResponse)
+def signin():
+    return _page("signin.html")
+
+
+@router.get("/app", response_class=HTMLResponse)
+def app_page():
+    return _page("app.html")
 
 
 @router.get("/get-started", response_class=HTMLResponse)
 def get_started():
-    return _render("full")
+    """Kept: it was the bring-your-own-videos URL. Signed-in work lives at /app
+    now, so send people there rather than 404 an address that may be shared."""
+    return RedirectResponse("/app", status_code=307)

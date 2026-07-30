@@ -6,11 +6,13 @@
 
 MomentSearch is an open-source, production-shaped stack for **visual** video
 search and RAG. Users upload videos (or paste YouTube URLs); background workers
-sample keyframes, dedup them, embed them with CLIP and index them per-user in
+sample keyframes, dedup them, embed them and index them per-user in
 [Qdrant](https://qdrant.tech). Ask a question and it retrieves the most
 relevant moments and (optionally) has **your own vision LLM** read those
 frames and write a cited answer — or honestly abstain when the evidence isn't
-there.
+there. Every model in that sentence is **pluggable by name** — the answer LLM
+and *both* embedding branches — so you can run it fully local and keyless, fully
+hosted, or any mix.
 
 > **Visual-first, multimodal for YouTube.** The core is *visual* — CLIP over
 > sampled frames, so it works on silent footage, screen recordings, sports,
@@ -24,7 +26,9 @@ there.
 - 🔍 **Visual retrieval** — CLIP embeddings, runs locally, no API key needed to search
 - 👥 **Multi-tenant & private** — every bucket key, Postgres row and Qdrant point is `user_id`-tagged and filtered
 - 🛡️ **Confidence gate** — below-threshold retrievals abstain *before* the LLM is ever called
-- 💬 **Cited answers** — bring your own vision LLM (OpenAI-compatible, NVIDIA, or Anthropic)
+- 💬 **Cited answers** — bring your own vision LLM: **Gemini, OpenAI, Claude, Grok, OpenRouter, Groq, Together, Mistral, NVIDIA, Azure, Ollama/vLLM** — a provider name plus a key is the whole configuration ([Pluggable models](#pluggable-models-llms-and-embeddings))
+- 🔌 **Swappable embeddings, both modalities** — frames via local **CLIP** (default, free) or hosted **Jina CLIP v2 / Cohere Embed v4 / Voyage multimodal / Gemini**; transcripts via **bge** (default) or **OpenAI / Gemini / Cohere / Voyage / Jina**. Mix them — the branches fuse by rank, not score
+- 🩺 **`python -m src.providers`** — one command tells you what your `.env` resolved to, which key it used, and what's missing
 - 🏠 **Per-user models** — each tenant can plug in a model *they* host (vLLM, Ollama, any OpenAI-compatible endpoint) and their answers run on it
 - 🧩 **Multimodal fusion** — for YouTube, a transcript branch runs alongside the visual one and a **rank-based scoring module** (RRF + time-windows + cross-modal boost) fuses them; "find where they *talk about* X" works even when the screen doesn't show it
 - 🔓 **Apache 2.0**
@@ -190,14 +194,18 @@ Poll `GET /api/videos` (or watch the UI chips) until `indexed`.
 
 1. **Retrieve — both branches, in parallel, always** (no query router; routing
    fails exactly on the ambiguous questions where you need help most):
-   - **visual** — CLIP text-embedding → Qdrant `moments`, filtered by `user_id`
-     (private *and* fast: the tenant index means a search touches only that
-     user's slice), quantization-rescored. Milliseconds.
+   - **visual** — text-embedding into the *frame* space → Qdrant `moments`,
+     filtered by `user_id` (private *and* fast: the tenant index means a search
+     touches only that user's slice), quantization-rescored. Milliseconds. The
+     embedder is **provider-switchable** (`IMAGE_EMBED_PROVIDER`): local **CLIP**
+     by default (free, offline, no key), or hosted **Jina CLIP v2** / **Cohere
+     Embed v4** / **Voyage multimodal** / **Gemini** — see
+     [Pluggable models](#pluggable-models-llms-and-embeddings).
    - **text** — text query-embedding → Qdrant `moments_text` (YouTube
-     transcripts). The embedder is **provider-switchable** (`TEXT_EMBED_PROVIDER`):
-     **bge** via fastembed by default (CPU, free, no key — search stays keyless),
-     or **OpenAI** `text-embedding-3-*` (hosted, stronger) when you have a key.
-     Skipped cleanly when `ENABLE_TRANSCRIPT=false` or nothing is indexed yet.
+     transcripts). Also provider-switchable (`TEXT_EMBED_PROVIDER`): **bge** via
+     fastembed by default (CPU, free, no key — search stays keyless), or
+     **OpenAI** / **Gemini** / **Cohere** / **Voyage** / **Jina** when you have a
+     key. Skipped cleanly when `ENABLE_TRANSCRIPT=false` or nothing is indexed yet.
 2. **Score — the fusion module** (`_fuse`, [src/rag/search.py](src/rag/search.py)).
    The two branches' raw scores are incomparable (CLIP ~0.3 vs bge ~0.7), so we
    never sort by raw score:
@@ -225,29 +233,163 @@ The cost fact that drives this shape: retrieval is ~10-30ms; the multimodal
 LLM call is seconds and dominates cost. Optimize there — few moments,
 downscaled, gated — not the vector store.
 
+## Pluggable models (LLMs and embeddings)
+
+Every model MomentSearch talks to is a **provider name plus a key**. The
+provider table ([src/providers/registry.py](src/providers/registry.py)) supplies
+the endpoint, a default model and the vector dimension, so this is a complete
+configuration:
+
+```bash
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=...
+```
+
+```
+src/providers/
+  registry.py     the table: endpoints, default models, dims, key env vars
+  status.py       what's configured / what's installed  (GET /api/providers)
+  llm/            answer synthesis — one module per wire dialect
+  embed/          retrieval — one module per provider, both branches
+```
+
+**Answer model** (`LLM_PROVIDER`) — must be **vision-capable**; it is shown the
+actual frames:
+
+| provider | key env var | default model | notes |
+|---|---|---|---|
+| `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` | also the generic OpenAI-compatible client |
+| `gemini` | `GEMINI_API_KEY` | `gemini-3.6-flash` | native SDK (`pip install google-genai`) |
+| `gemini_openai` | `GEMINI_API_KEY` | `gemini-3.6-flash` | same models, no extra dependency |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` | `pip install anthropic` |
+| `openrouter` | `OPENROUTER_API_KEY` | `openai/gpt-4o-mini` | one key, hundreds of models |
+| `xai` (`grok`) | `XAI_API_KEY` | `grok-4.5` | |
+| `groq` | `GROQ_API_KEY` | — set `LLM_MODEL` | catalogue rotates; no safe default |
+| `together` | `TOGETHER_API_KEY` | `Qwen/Qwen2.5-VL-72B-Instruct` | |
+| `fireworks` | `FIREWORKS_API_KEY` | — set `LLM_MODEL` | |
+| `mistral` | `MISTRAL_API_KEY` | `pixtral-12b-2409` | |
+| `nvidia` | `NVIDIA_API_KEY` | `meta/llama-3.2-11b-vision-instruct` | NIM |
+| `azure_openai` | `AZURE_OPENAI_API_KEY` | — deployment name | `AZURE_OPENAI_ENDPOINT` |
+| `ollama` / `lmstudio` / `vllm` | none | `qwen2.5vl` / — / — | localhost, no key |
+| `custom` | optional | — | any OpenAI-compatible server via `LLM_BASE_URL` |
+
+Most of these share **one** adapter, because most of the industry speaks the
+OpenAI Chat Completions dialect — they differ only by `base_url`. Adding a
+provider that speaks a known dialect is a row in a table, not new code. Unknown
+names fall back to the generic OpenAI-compatible client, so a provider that
+launched last week works today with `LLM_BASE_URL` alone.
+
+**Embeddings** — two independent branches, each provider-switchable. They fuse
+by *rank* (RRF), never by score, so mixing is fine: local CLIP frames plus hosted
+Gemini transcripts is a sensible setup.
+
+**Visual branch** (`IMAGE_EMBED_PROVIDER`) — frames *and* the question, one space:
+
+| provider | default model | dim (truncatable to) | key env var | install |
+|---|---|---|---|---|
+| `clip` **default** | `clip-ViT-B-32` | 512 | none — offline | sentence-transformers |
+| `jina` | `jina-clip-v2` | 1024 (64–1024) | `JINA_API_KEY` | **nothing** |
+| `cohere` | `embed-v4.0` | 1536 (256–1536) | `COHERE_API_KEY` | **nothing** |
+| `voyage` | `voyage-multimodal-3.5` | 1024 (256–2048) | `VOYAGE_API_KEY` | **nothing** |
+| `gemini` | `gemini-embedding-2` | 1536 (128–3072) | `GEMINI_API_KEY` | `google-genai` |
+
+**Transcript branch** (`TEXT_EMBED_PROVIDER`) — caption chunks:
+
+| provider | default model | dim | key env var | install |
+|---|---|---|---|---|
+| `fastembed` **default** | `BAAI/bge-small-en-v1.5` | 384 | none — offline | fastembed |
+| `openai` | `text-embedding-3-small` | 1536 | `OPENAI_API_KEY` (falls back to `LLM_API_KEY`) | `openai` |
+| `gemini` | `gemini-embedding-2` | 1536 | `GEMINI_API_KEY` | `google-genai` |
+| `cohere` | `embed-v4.0` | 1536 | `COHERE_API_KEY` | **nothing** |
+| `voyage` | `voyage-3.5` | 1024 | `VOYAGE_API_KEY` | **nothing** |
+| `jina` | `jina-embeddings-v3` | 1024 | `JINA_API_KEY` | **nothing** |
+
+Per-branch overrides, when the defaults aren't what you want:
+`IMAGE_EMBED_MODEL` / `IMAGE_EMBED_DIM` / `IMAGE_EMBED_API_KEY` /
+`IMAGE_EMBED_BASE_URL` / `IMAGE_EMBED_BATCH` / `IMAGE_EMBED_CONCURRENCY`, and the
+same six with a `TEXT_EMBED_` prefix. `*_BASE_URL` is how you point the `openai`
+text embedder at your own vLLM/TEI server; `*_DIM` is required for a model the
+registry's table doesn't list. The legacy `CLIP_MODEL` / `CLIP_DIM` /
+`CLIP_BATCH` / `CLIP_SERVICE_URL` names still work as aliases
+(`EMBED_SERVICE_URL` is the current name for the last one).
+
+The visual branch needs a **joint** image+text space — search is text→image, so
+the model must embed both into the *same* space. That's why OpenAI isn't an
+option there (it has no image-embedding model) while CLIP, Jina CLIP v2, Cohere
+Embed v4, Voyage multimodal and `gemini-embedding-2` are. Jina, Cohere and Voyage
+need **no SDK at all** — those adapters are plain HTTPS from the standard library.
+
+**Cost note for the visual branch:** a video is hundreds of frames, so per-frame
+price and latency multiply fast. Local CLIP is free and the default for a reason.
+Among the hosted ones, Jina/Cohere/Voyage take **many images per request**;
+Gemini's embeddings endpoint takes **one image per call** (measured ~9s each, and
+it appears to serialize per key), so `IMAGE_EMBED_PROVIDER=gemini` is best kept
+for small corpora or paired with a higher `FRAME_INTERVAL_SEC` / lower
+`MAX_FRAMES`. Tune the fan-out with `IMAGE_EMBED_CONCURRENCY`. The transcript
+branch is cheap everywhere — a video is a few dozen chunks, not hundreds of frames.
+
+**Two things that will bite you, and what the code does about them:**
+
+- **Dimensions must match between indexing and querying.** Switching provider or
+  model changes the vector size, which makes the existing index unusable. Qdrant
+  collection creation now **refuses** to reuse a collection whose vector size
+  disagrees with the configured embedder, with a message telling you to re-index
+  or restore the old setting — rather than failing mid-ingest, or (worse) silently
+  comparing vectors from two unrelated spaces.
+- **Confidence thresholds are model-specific.** `CONFIDENCE_THRESHOLD=0.2` is
+  calibrated for CLIP's text→image cosines (~0.2-0.35); a different embedder on
+  another scale would over-abstain. Defaults now come from the chosen provider's
+  preset, and providers we haven't calibrated default to **0 = gate off** — the
+  safe direction. Measure yours with [benchmark/score.py](benchmark/score.py)
+  before pinning a value.
+
+**Check what your `.env` actually resolved to** — this is the first thing to run
+when a key "isn't working":
+
+```bash
+python -m src.providers          # resolved config, missing keys, installed SDKs
+python -m src.providers --live   # actually call every configured model
+python -m src.providers --json   # same data as GET /api/providers
+```
+
+It names the env var each key came from, flags a provider name it doesn't
+recognize (a typo resolves to a *fallback* rather than failing, which is
+convenient and silent), and flags the single most confusing misconfiguration: a
+leftover generic `LLM_API_KEY` from another provider shadowing the
+provider-specific one.
+
 ## Bring your own model (per user)
 
 Which model writes the answer is resolved **per tenant**, in this order:
 
-1. **The user's own hosted model** — saved via `PUT /api/llm` (**backend-only —
-   not exposed in the UI**): a **vLLM** / Ollama / LM Studio / Together
-   / OpenRouter endpoint (anything OpenAI-compatible) via `base_url`, NVIDIA
-   NIM, or Anthropic. The model must be **vision-capable** — it is shown the
-   actual frames (e.g. `Qwen/Qwen2.5-VL-7B-Instruct` or
-   `llava-hf/llava-v1.6-mistral-7b-hf` on vLLM). The UI only shows a read-only
-   badge of which model is active — there's no model-settings form.
+1. **The user's own model** — saved via `PUT /api/llm` (**backend-only — not
+   exposed in the UI**): any provider from the table above with their own key, or
+   their own **vLLM** / Ollama / LM Studio endpoint via `base_url`. The model must
+   be **vision-capable** — it is shown the actual frames (e.g.
+   `Qwen/Qwen2.5-VL-7B-Instruct` on vLLM). `GET /api/providers` lists the choices;
+   the UI only shows a read-only badge of which model is active — there's no
+   model-settings form. Only the *LLM* is per-tenant: embeddings live in shared
+   collections, so their dimension can't vary by user.
 2. **The server default** — the `LLM_*` env config, used when the user hasn't
    attached one.
 3. **No model** — retrieval still works; answers degrade to honest
    visual-similarity summaries.
 
 ```bash
-# attach your hosted vLLM to your account
+# what can I attach?
+curl localhost:8000/api/providers
+
+# attach your own hosted vLLM
 # (drop the Authorization header when ADMIN_TOKEN is unset — the dev default)
 curl -X PUT localhost:8000/api/llm \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
   -d '{"provider":"openai","model":"Qwen/Qwen2.5-VL-7B-Instruct",
        "base_url":"http://my-vllm-host:8000/v1"}'
+
+# or a hosted provider — model is optional, the preset knows its default
+curl -X PUT localhost:8000/api/llm \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"provider":"grok","api_key":"xai-..."}'
 
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" localhost:8000/api/llm/test
 #  -> sends one tiny image through your model; fails fast if it isn't vision-capable
@@ -257,7 +399,9 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" localhost:8000/api/llm
 ```
 
 Settings live in Postgres (`ms_user_llms`, one row per user); API keys are
-write-only (masked on read, blank on update keeps the stored key). `/api/ask`
+write-only (masked on read, blank on update keeps the stored key). Bad configs
+are rejected at `PUT` time with the fix named ("no API key. Set XAI_API_KEY"),
+not at answer time. `/api/ask`
 responses include `llm_source: "user" | "server"` so the UI can show whose
 model answered. **Ops note:** user `base_url`s make your API box call
 user-chosen hosts — on a hosted deployment, egress-restrict the API container
@@ -339,7 +483,7 @@ that's the whole point of splitting the four processes out:
 |---|---|---|---|
 | **API** (`src/app.py`) | replicas (horizontal) | request concurrency (all I/O, no heavy compute) | stateless; auto-stops when idle on Fly |
 | **Worker** (`src/worker.py`) | replicas (horizontal) | ingest throughput — download + ffmpeg per video | `fly scale count worker=N` / `--scale worker=N`; workers only dial out, zero coordination |
-| **CLIP service** (`src/clip_service.py`) | vertically → **GPU** | embedding FLOPs (the compute-heavy step) | one warm model behind `CLIP_SERVICE_URL`; move it to a GPU box, change only the URL |
+| **Embedding service** (`src/clip_service.py`) | vertically → **GPU** | embedding FLOPs (the compute-heavy step) | one warm model behind `EMBED_SERVICE_URL` (`CLIP_SERVICE_URL` still works); move it to a GPU box, change only the URL. Skipped entirely when the embedder is a hosted API — nothing to warm |
 | **Qdrant** | memory profile → shards | vector count (frames balloon fast) | int8 + on-disk + rescore by default; shard when one node is outgrown |
 
 The two axes that matter pull in opposite directions: **ingest** (many cheap
@@ -357,15 +501,21 @@ at a time. Runs bottleneck on different resources (fetch = network, sampling
 full? `fly scale count worker=3` or `docker compose up --scale worker=3` —
 workers only dial out, so replicas need zero coordination.
 
-**CLIP (the usual bottleneck) — "embedding is a URL".** Inference runs in a
-dedicated service ([clip_service.py](src/clip_service.py)): one warm model loaded
-once at boot, api + workers send batches over HTTP (`CLIP_SERVICE_URL`).
-That's what makes workers cheap and stateless — no torch, no ~15-30s model
-reload per video — and it's the standard model-serving pattern (TEI / Triton /
-OpenAI-embeddings-shaped). Scaling embedding = scaling that one service: CPU
-container today, the same container on a GPU machine later, with nothing but
-the URL changing. Unset `CLIP_SERVICE_URL` and everything embeds in-process —
-the zero-service simple mode for cloners.
+**Embedding (the usual bottleneck) — "embedding is a URL".** Local inference runs
+in a dedicated service ([clip_service.py](src/clip_service.py)): one warm model
+loaded once at boot, api + workers send batches over HTTP (`EMBED_SERVICE_URL`;
+`CLIP_SERVICE_URL` is still accepted). That's what makes workers cheap and
+stateless — no torch, no ~15-30s model reload per video — and it's the standard
+model-serving pattern (TEI / Triton / OpenAI-embeddings-shaped). Scaling
+embedding = scaling that one service: CPU container today, the same container on
+a GPU machine later, with nothing but the URL changing. Unset the URL and
+everything embeds in-process — the zero-service simple mode for cloners.
+
+Choosing a **hosted** embedder ([Pluggable models](#pluggable-models-llms-and-embeddings))
+is the third option: it sidesteps this service entirely — the API and workers call
+the provider directly, so there's nothing to warm, nothing to scale, and the
+service URL is ignored. You've swapped a compute-scaling problem for a
+cost-per-frame one.
 
 **Deletes purge everything** — `DELETE /api/videos/{id}` removes the vectors
 (by filter), thumbnails + raw upload (batch delete), and the manifest row.
@@ -461,10 +611,13 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" localhost:8000/api/videos
 # ask
 curl -X POST localhost:8000/api/ask -H "Content-Type: application/json" \
   -d '{"question":"a diagram of the attention mechanism"}'
+
+# which model providers are supported, and what is this deployment using?
+curl localhost:8000/api/providers
 ```
 
 Public: `GET /` (sample UI) · `GET /get-started` · `GET /api/config` ·
-`GET /api/health`.
+`GET /api/providers` · `GET /api/health`.
 
 ## Layout
 
@@ -487,7 +640,7 @@ the four entrypoints as top-level modules in the package.
 └── src/                     ── entrypoints ──────────────────────────────────
     ├── app.py               unified FastAPI app — videos + search routers, one port
     ├── worker.py            Prefect worker — serves "ms-ingest-video/ingest"
-    ├── clip_service.py      CLIP inference service — one warm model behind a URL
+    ├── clip_service.py      embedding service — warm local models behind a URL
     ├── seed.py              startup gate — indexes the 4 samples, then exits
     │                        ── core ──────────────────────────────────────────
     ├── config.py            every env knob in one place
@@ -495,21 +648,42 @@ the four entrypoints as top-level modules in the package.
     ├── jobs.py              Prefect Cloud trigger (API-side run_deployment)
     ├── storage.py           object storage (aws|gcp|gcp_native|flyio|local)
     │                        + presigned PUT/GET, HEAD verify, batch delete
-    ├── llm.py               provider-agnostic vision-LLM answer (frames downscaled)
+    ├── llm.py               back-compat shim -> providers/llm/
     ├── samples.py           the four-sample "Deep Dive into LLMs" corpus
     ├── seeding.py           blocking seed-to-completion logic (used by seed.py)
+    ├── providers/           ── pluggable models (see "Pluggable models") ─────
+    │   ├── registry.py      the provider table: endpoints, models, dims, keys
+    │   ├── status.py        configured/installed/missing — GET /api/providers
+    │   ├── __main__.py      `python -m src.providers` model doctor (+ --live)
+    │   ├── llm/             answer synthesis, one module per wire dialect
+    │   │   ├── base.py          LLMConfig, system prompt, image downscaling
+    │   │   ├── openai_compat.py OpenAI dialect: OpenAI, OpenRouter, Grok, Groq,
+    │   │   │                    Together, Fireworks, Mistral, NVIDIA, Azure,
+    │   │   │                    Ollama, LM Studio, vLLM, custom
+    │   │   ├── gemini.py        Google Gemini, native google-genai SDK
+    │   │   └── anthropic.py     Anthropic Messages API
+    │   └── embed/           retrieval embeddings, both branches
+    │       ├── base.py          config/dim resolution, HTTP, L2-normalizing
+    │       ├── clip_local.py    local CLIP — joint image+text (default)
+    │       ├── fastembed_text.py bge — transcripts (default)
+    │       ├── openai_text.py   OpenAI + any OpenAI-compatible embeddings
+    │       ├── gemini.py        gemini-embedding-2 — unified space, both branches
+    │       ├── jina.py          jina-clip-v2 / v3 — both branches, no SDK
+    │       ├── cohere.py        embed-v4.0 — both branches, no SDK
+    │       ├── voyage.py        voyage-multimodal — both branches, no SDK
+    │       └── remote.py        client for the warm embedding service
     ├── api/
     │   ├── videos.py        write path: presign, register, status, retry, delete
-    │   └── search.py        read path: /api/ask, /api/llm, config, media, UI
+    │   └── search.py        read path: /api/ask, /api/llm, /api/providers, media, UI
     ├── dispatcher.py        WFQ: fair round-robin admission of pending videos
     ├── ingest/
     │   ├── fetch.py         source acquisition (bucket download | yt-dlp) + sha256
     │   ├── frames.py        ffmpeg pipe-to-memory sampling (interval | scene)
-    │   ├── dedup.py         perceptual-hash dedup (before CLIP spends compute)
+    │   ├── dedup.py         perceptual-hash dedup (before embedding spends compute)
     │   ├── transcript.py    YouTube captions → time-chunks (the text branch)
     │   └── pipeline.py      the Prefect flow: fetch → sample → embed/index → transcript
     └── rag/
-        ├── embeddings.py    CLIP image+text + transcript (bge or OpenAI) — in-proc/remote
+        ├── embeddings.py    back-compat shim -> providers/embed/
         ├── vector_store.py  multi-tenant Qdrant: visual + text collections, int8/on-disk
         └── search.py        2-branch retrieve → RRF fusion/scoring → gate → cited answer
 ```

@@ -14,7 +14,9 @@ google-cloud-storage>=2.16     # STORAGE_PROVIDER=gcp_native
 # Vector DB
 qdrant-client>=1.12
 
-# Visual embeddings (CLIP) — pulls torch
+# Visual embeddings — local CLIP (IMAGE_EMBED_PROVIDER=clip, the default).
+# Pulls torch. Not needed if you use a hosted image embedder (jina/cohere/
+# voyage/gemini), but keep it unless you're trimming the image on purpose.
 sentence-transformers>=2.7
 pillow>=10.0
 numpy>=1.24
@@ -26,6 +28,18 @@ fastembed>=0.3
 # bot-detection constantly and old yt-dlp versions stop working first.
 yt-dlp>=2026.7.4
 
-# Bring-your-own multimodal LLM (optional providers; install what you use)
+# Bring-your-own models — install only the SDK your provider needs.
+#
+# openai covers MOST providers, because most speak the OpenAI dialect: OpenAI,
+# OpenRouter, xAI (Grok), Groq, Together, Fireworks, Mistral, NVIDIA NIM, Azure,
+# Gemini's compat endpoint, Ollama, LM Studio, vLLM — plus OpenAI-compatible
+# text embeddings. It's also what the default text-embedding path uses.
 openai>=1.30
-# anthropic>=0.25   # uncomment for LLM_PROVIDER=anthropic
+#
+# Optional, one line per provider that has its own API:
+# google-genai>=1.0   # LLM_PROVIDER=gemini, IMAGE/TEXT_EMBED_PROVIDER=gemini
+# anthropic>=0.25     # LLM_PROVIDER=anthropic
+#
+# Jina, Cohere and Voyage need NOTHING installed — those adapters use plain
+# HTTPS from the standard library. Run `python -m src.providers` to see which
+# of these your current .env actually requires.

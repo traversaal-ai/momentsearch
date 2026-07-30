@@ -8,10 +8,11 @@ talks are indexed they stay indexed, so every later start finishes in seconds.
 """
 from __future__ import annotations
 
+import json
 import time
 import urllib.request
 
-from . import config, db
+from . import config, db, storage
 from .ingest.pipeline import ingest_video
 from .rag import vector_store
 from .samples import SAMPLE_VIDEOS, sample_video_id
@@ -20,9 +21,20 @@ _MAX_PASSES = 3  # re-attempt videos that fail (e.g. a transient YouTube hiccup)
 
 
 def wait_for_clip(timeout: int = 600) -> None:
-    """Block until the CLIP service answers /healthz — first boot downloads the
-    model (~600MB). No-op when embedding is in-process (CLIP_SERVICE_URL unset)."""
-    if not config.CLIP_SERVICE_URL:
+    """Block until the embedding service answers /healthz — first boot downloads
+    the model (~600MB).
+
+    No-op in two cases: embedding runs in-process (no EMBED_SERVICE_URL), or both
+    branches use hosted APIs — an API has no weights to warm, so there is nothing
+    to wait for even when the service container happens to be running.
+    """
+    from .providers import embed
+
+    if not config.EMBED_SERVICE_URL:
+        return
+    if not (embed.image_config().local or embed.text_config().local):
+        print("[seed] embedding providers are hosted APIs — nothing to warm up",
+              flush=True)
         return
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -39,10 +51,16 @@ def wait_for_clip(timeout: int = 600) -> None:
 
 
 def _not_indexed() -> list[dict]:
+    """Samples that still need (re)ingest: never indexed, OR indexed on a
+    DIFFERENT embedding version. EMBED_VERSION is derived from the visual
+    provider + model, so switching either one bumps it and auto-re-seeds all four
+    samples into the new collections — no manual reset needed."""
     out = []
     for v in SAMPLE_VIDEOS:
-        row = db.get_video(sample_video_id(v["url"]))
-        if (row or {}).get("status") != "indexed":
+        row = db.get_video(sample_video_id(v["url"])) or {}
+        ev = row.get("embed_version")
+        stale = ev is not None and ev != config.EMBED_VERSION
+        if row.get("status") != "indexed" or stale:
             out.append(v)
     return out
 
@@ -65,11 +83,8 @@ def seed_to_completion() -> bool:
 
     wait_for_clip()
 
-    pending = _not_indexed()
-    if not pending:
-        print("[seed] all four samples already indexed — ready", flush=True)
-        return True
-
+    # The loop below no-ops when nothing is pending, so no early return — we still
+    # fall through to the transcript backfill for already-indexed samples.
     for attempt in range(1, _MAX_PASSES + 1):
         todo = _not_indexed()
         if not todo:
@@ -92,5 +107,30 @@ def seed_to_completion() -> bool:
         names = ", ".join(sample_video_id(v["url"]) for v in remaining)
         print(f"[seed] STILL not indexed after {_MAX_PASSES} passes: {names}", flush=True)
         return False
+    _backfill_transcripts()
     print("[seed] sample corpus complete — all four indexed", flush=True)
     return True
+
+
+def _backfill_transcripts() -> None:
+    """Ensure every sample has its durable transcript copy in object storage.
+
+    Samples indexed before transcript-to-storage existed won't have the file, and
+    they won't re-ingest (embed_version already matches), so the synced transcript
+    panel would 404. Reconstruct the file from the chunks already in Qdrant — no
+    YouTube, idempotent (skips any sample that already has it)."""
+    for v in SAMPLE_VIDEOS:
+        vid = sample_video_id(v["url"])
+        key = storage.transcript_key(config.DEFAULT_USER_ID, vid)
+        try:
+            if storage.exists(key):
+                continue
+            chunks = vector_store.fetch_chunks(config.DEFAULT_USER_ID, vid)
+            if not chunks:
+                continue
+            storage.put_bytes(
+                key, json.dumps(chunks, ensure_ascii=False).encode("utf-8"),
+                "application/json")
+            print(f"[seed] backfilled transcript -> storage: {vid} ({len(chunks)} chunks)", flush=True)
+        except Exception as exc:
+            print(f"[seed] transcript backfill failed for {vid}: {exc}", flush=True)

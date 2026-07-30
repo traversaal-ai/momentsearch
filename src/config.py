@@ -3,6 +3,12 @@
 Same conventions as the digital-twin-akash service: module-level constants,
 provider-neutral STORAGE_* credentials with AWS_* fallbacks, Prefect Cloud
 read straight from PREFECT_API_URL / PREFECT_API_KEY by the SDK.
+
+Model choice follows the same provider-neutral idea: pick a provider NAME and
+src/providers/registry.py supplies the endpoint, the default model, the vector
+dimension and which env var holds the key. `LLM_PROVIDER=gemini` +
+`GEMINI_API_KEY` is a complete configuration; so is `IMAGE_EMBED_PROVIDER=jina`
++ `JINA_API_KEY`. Anything you set explicitly always wins over the preset.
 """
 from __future__ import annotations
 
@@ -10,6 +16,8 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from .providers import registry  # pure data — no import cycle
 
 load_dotenv()
 
@@ -19,6 +27,16 @@ DATA = ROOT / "data"  # local-provider storage root (dev only)
 
 def _envbool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _first_env(*names: str) -> str:
+    """First non-empty of several env vars — lets a provider's conventional key
+    name (GEMINI_API_KEY, JINA_API_KEY, ...) work without renaming it."""
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _int(name: str, default: int) -> int:
@@ -45,6 +63,23 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 # every bucket key, Postgres row, and Qdrant point is already user_id-tagged.
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "default")
+
+# --- Demo sign-in (email -> workspace) ---------------------------------------
+# An email is exchanged for a per-email workspace id (u_<uuid>) and an
+# HMAC-signed session token; every request then carries that token and the API
+# derives the tenant FROM THE SIGNATURE, so X-User-Id can't be spoofed by hand.
+#
+# This is deliberately NOT authentication: no password, no verification, so
+# anyone can type anyone's address. It exists so a demo has real, separate,
+# persistent workspaces. Put a real IdP (Clerk/JWT/OAuth) in front of
+# /api/auth/* before this faces users who matter — the tenant model underneath
+# doesn't change when you do.
+#
+# AUTH_SECRET signs the tokens. Unset = a random per-process secret, which means
+# sessions die on restart and DON'T work across replicas — set it in any real
+# deploy (openssl rand -hex 32).
+AUTH_SECRET = os.getenv("AUTH_SECRET", "").strip()
+SESSION_TTL_DAYS = _int("SESSION_TTL_DAYS", 30)
 
 # --- Object storage (videos + frame thumbnails) ------------------------------
 # STORAGE_PROVIDER: local | aws | gcp | gcp_native | flyio
@@ -140,24 +175,56 @@ THUMB_QUALITY = _int("THUMB_QUALITY", 3)  # ffmpeg -q:v (2 best .. 31 worst)
 DEDUP_ENABLED = _envbool("DEDUP_ENABLED", True)
 DEDUP_MAX_DISTANCE = _int("DEDUP_MAX_DISTANCE", 4)  # Hamming distance on 64-bit dHash
 
-# --- CLIP embeddings ------------------------------------------------------------
-# One model encodes frames and text queries into a shared space. Runs on CPU
-# inside the worker today; EMBED_VERSION is stamped on every Qdrant point so a
-# future re-embed (or an external GPU CLIP service) can replace stale vectors
-# without guessing.
-CLIP_MODEL = os.getenv("CLIP_MODEL", "clip-ViT-B-32").strip()
+# --- Visual embeddings: the FRAME branch ----------------------------------------
+# One model encodes frames AND text queries into a shared space, so a question
+# can match what is *seen* on screen. That shared space is why the provider must
+# be a joint image+text model (registry.IMAGE_EMBED_PRESETS):
+#   clip   (default) local sentence-transformers CLIP — free, offline, CPU-fine
+#   jina             jina-clip-v2 API      — multilingual, Matryoshka dims
+#   cohere           embed-v4.0 API        — strong on text-heavy frames
+#   voyage           voyage-multimodal API — single backbone, less modality bias
+#   gemini           gemini-embedding-2    — one unified space for everything
+# CLIP_* names still work as aliases for the clip provider, so existing .env
+# files keep running untouched.
+IMAGE_EMBED_PROVIDER = registry.image_embed_key(
+    os.getenv("IMAGE_EMBED_PROVIDER", "").strip() or "clip")
+_IMG = registry.IMAGE_EMBED_PRESETS[IMAGE_EMBED_PROVIDER]
+CLIP_MODEL = os.getenv("CLIP_MODEL", "clip-ViT-B-32").strip()   # legacy alias
+IMAGE_EMBED_MODEL = (os.getenv("IMAGE_EMBED_MODEL", "").strip()
+                     or (CLIP_MODEL if IMAGE_EMBED_PROVIDER == "clip"
+                         else _IMG.default_model))
+# Vector dimension. 0 = auto: known models resolve from the registry table (so
+# the API can create the Qdrant collection at boot WITHOUT loading a model);
+# unknown LOCAL models get measured by loading. Hosted providers can't be
+# measured — set the dim explicitly for a model the table doesn't list.
+CLIP_DIM = _int("CLIP_DIM", 0)                                  # legacy alias
+IMAGE_EMBED_DIM = _int("IMAGE_EMBED_DIM",
+                       CLIP_DIM or registry.preset_dim(_IMG, IMAGE_EMBED_MODEL))
+IMAGE_EMBED_API_KEY = _first_env("IMAGE_EMBED_API_KEY", *_IMG.key_envs)
+IMAGE_EMBED_BASE_URL = os.getenv("IMAGE_EMBED_BASE_URL", "").strip()
 CLIP_BATCH = _int("CLIP_BATCH", 128)   # frames per embed call (inner batch is 32)
+# Hosted APIs cap inputs per request far below CLIP's local batch.
+IMAGE_EMBED_BATCH = _int("IMAGE_EMBED_BATCH",
+                         CLIP_BATCH if _IMG.local else 32)
+# In-flight requests for providers that embed ONE image per call (Gemini). Their
+# per-image latency is what dominates a video's ingest time, so this is the knob
+# that matters there; raise it if the provider tolerates it, lower it on 429s.
+IMAGE_EMBED_CONCURRENCY = _int("IMAGE_EMBED_CONCURRENCY", 8)
 # Inference-service URL ("embedding is a URL"). Set -> api/worker send batches
 # to the warm clip_service.py container instead of loading the model in-process
 # (which costs each Prefect run subprocess a fresh ~15-30s torch load). Unset
 # -> in-process embedding (simple mode, no extra service). Point it at a GPU
-# machine later — nothing else changes.
-CLIP_SERVICE_URL = os.getenv("CLIP_SERVICE_URL", "").strip().rstrip("/")
-# Vector dimension override. 0 = auto: known CLIP models resolve from a table
-# (so the API can create the collection at boot WITHOUT loading the model);
-# unknown models load the model to measure. Set explicitly for custom models.
-CLIP_DIM = _int("CLIP_DIM", 0)
-EMBED_VERSION = os.getenv("EMBED_VERSION", f"{CLIP_MODEL}-v1")
+# machine later — nothing else changes. Ignored for hosted providers: an API
+# has no weights to keep warm, so it is called directly.
+EMBED_SERVICE_URL = (os.getenv("EMBED_SERVICE_URL", "").strip()
+                     or os.getenv("CLIP_SERVICE_URL", "").strip()).rstrip("/")
+CLIP_SERVICE_URL = EMBED_SERVICE_URL   # legacy alias
+# Stamped on every Qdrant point so a re-embed can find stale vectors. Keeps the
+# historical "<model>-v1" form for CLIP so existing indexes aren't invalidated.
+EMBED_VERSION = os.getenv(
+    "EMBED_VERSION",
+    f"{IMAGE_EMBED_MODEL}-v1" if IMAGE_EMBED_PROVIDER == "clip"
+    else f"{IMAGE_EMBED_PROVIDER}-{IMAGE_EMBED_MODEL}-v1")
 
 # --- Multimodal: transcript (text) branch (Path 1) -----------------------------
 # The visual branch is CLIP frames (above). This adds a SECOND branch: YouTube
@@ -169,34 +236,61 @@ EMBED_VERSION = os.getenv("EMBED_VERSION", f"{CLIP_MODEL}-v1")
 # captions just indexes visually (the branch is skipped, never fatal).
 ENABLE_TRANSCRIPT = _envbool("ENABLE_TRANSCRIPT", True)
 TEXT_COLLECTION = os.getenv("TEXT_COLLECTION", "moments_text")
-# Transcript-branch embedding PROVIDER — env decides the model:
+# Transcript-branch embedding PROVIDER (registry.TEXT_EMBED_PRESETS) — the
+# provider name alone picks the model, the dimension and the key env var:
 #   fastembed (default) -> bge via fastembed: CPU, free, NO API key (keeps search
 #                          working keyless for a fresh cloner). Dim 384.
-#   openai              -> OpenAI (or any OpenAI-compatible) embeddings API, e.g.
-#                          text-embedding-3-small. Hosted, stronger retrieval,
-#                          costs per call + needs a key. Reuses the LLM_* key /
-#                          base_url by default (override with TEXT_EMBED_API_KEY /
-#                          TEXT_EMBED_BASE_URL). Setting the provider alone flips
-#                          the default model+dim to 3-small / 1536.
+#   openai              -> OpenAI or any OpenAI-compatible embeddings server
+#                          (vLLM/TEI/Together via TEXT_EMBED_BASE_URL). Falls
+#                          back to LLM_API_KEY so ONE OpenAI key powers both the
+#                          answer and the embeddings. Dim 1536.
+#   gemini              -> gemini-embedding-2, the same unified space the visual
+#                          branch can use. Dim 1536.
+#   cohere / voyage / jina -> hosted text embeddings, dims 1536 / 1024 / 1024.
 # The model & dim MUST match between indexing and querying, so switching provider
-# means RE-SEEDING the transcript collection (its vector dim changes). The two
-# branches fuse by RANK (RRF), so the text model is independent of CLIP.
-TEXT_EMBED_PROVIDER = os.getenv("TEXT_EMBED_PROVIDER", "fastembed").strip().lower()
-_TE_OPENAI = TEXT_EMBED_PROVIDER == "openai"
-TEXT_EMBED_MODEL = os.getenv(
-    "TEXT_EMBED_MODEL",
-    "text-embedding-3-small" if _TE_OPENAI else "BAAI/bge-small-en-v1.5")
-TEXT_EMBED_DIM = _int("TEXT_EMBED_DIM", 1536 if _TE_OPENAI else 384)
-# openai provider: falls back to the LLM key/base_url in embeddings.py so ONE
-# OpenAI key can power both the answer and the text embeddings.
-TEXT_EMBED_API_KEY = os.getenv("TEXT_EMBED_API_KEY", "").strip()
+# means RE-INDEXING the transcript collection (its vector dim changes). The two
+# branches fuse by RANK (RRF), so this model is fully independent of the visual one.
+TEXT_EMBED_PROVIDER = registry.text_embed_key(
+    os.getenv("TEXT_EMBED_PROVIDER", "").strip() or "fastembed")
+_TXT = registry.TEXT_EMBED_PRESETS[TEXT_EMBED_PROVIDER]
+TEXT_EMBED_MODEL = os.getenv("TEXT_EMBED_MODEL", "").strip() or _TXT.default_model
+TEXT_EMBED_DIM = _int("TEXT_EMBED_DIM", registry.preset_dim(_TXT, TEXT_EMBED_MODEL))
+TEXT_EMBED_API_KEY = (_first_env("TEXT_EMBED_API_KEY", *_TXT.key_envs)
+                      # historical convenience: one OpenAI key for both jobs
+                      or (_first_env("LLM_API_KEY")
+                          if TEXT_EMBED_PROVIDER == "openai" else ""))
 TEXT_EMBED_BASE_URL = os.getenv("TEXT_EMBED_BASE_URL", "").strip()
-TEXT_EMBED_VERSION = os.getenv("TEXT_EMBED_VERSION", f"{TEXT_EMBED_MODEL}-v1")
+TEXT_EMBED_BATCH = _int("TEXT_EMBED_BATCH", 64)
+TEXT_EMBED_VERSION = os.getenv(
+    "TEXT_EMBED_VERSION",
+    f"{TEXT_EMBED_MODEL}-v1" if TEXT_EMBED_PROVIDER == "fastembed"
+    else f"{TEXT_EMBED_PROVIDER}-{TEXT_EMBED_MODEL}-v1")
 # Transcript chunking: group caption cues into ~CHUNK_SECONDS windows so a chunk
 # is a coherent spoken passage with a real t_start/t_end, not one tiny cue.
 TRANSCRIPT_CHUNK_SECONDS = _float("TRANSCRIPT_CHUNK_SECONDS", 20.0)
 TRANSCRIPT_LANGS = [c.strip() for c in
                     os.getenv("TRANSCRIPT_LANGS", "en,en-US,en-GB").split(",") if c.strip()]
+
+# --- Speech-to-text (ASR) for UPLOADS ------------------------------------------
+# YouTube hands us captions; uploaded files don't, so their transcript branch is
+# produced by ASR from the file's OWN audio (src/ingest/asr.py). The cues come
+# out in the same [{text,t_start,t_end}] shape as captions, so chunking, the GCP
+# store, text embedding, retrieval and the synced transcript panel treat uploads
+# and YouTube identically — an upload gets "said" moments too.
+#   openai (default) -> whisper-1 via the OpenAI API. verbose_json gives per-
+#                       segment timestamps. Reuses LLM_API_KEY, so ONE OpenAI key
+#                       powers the answer, the embeddings AND transcription. No
+#                       GPU, no model download; audio over the API's 25MB/request
+#                       limit is auto-split into time windows (timestamps offset
+#                       back to absolute time). ASR_MODEL can be gpt-4o-transcribe.
+# Set ENABLE_ASR=0 (or ASR_PROVIDER="") to leave uploads visual-only.
+ENABLE_ASR = _envbool("ENABLE_ASR", True)
+ASR_PROVIDER = os.getenv("ASR_PROVIDER", "openai").strip().lower()
+ASR_MODEL = os.getenv("ASR_MODEL", "").strip() or "whisper-1"
+# One OpenAI key for everything: ASR_API_KEY -> OPENAI_API_KEY -> LLM_API_KEY.
+ASR_API_KEY = _first_env("ASR_API_KEY", "OPENAI_API_KEY") or _first_env("LLM_API_KEY")
+ASR_BASE_URL = os.getenv("ASR_BASE_URL", "").strip()   # OpenAI-compatible ASR server
+ASR_LANGUAGE = os.getenv("ASR_LANGUAGE", "").strip()   # "" = autodetect; e.g. "en"
 
 # --- Fusion (multimodal retrieval) ---------------------------------------------
 # RRF: rank-based fusion across branches (score-agnostic). rrf = 1/(K + rank).
@@ -278,20 +372,41 @@ KNN_K = _int("KNN_K", 24)                # candidates fetched before trimming to
 # below their threshold. Fusion scores are RRF (tiny), so the gate uses each
 # branch's own raw cosine. CLIP text->image cosines run low (~0.2-0.35); bge
 # text-text cosines run higher (~0.5-0.7 for real matches). 0 disables.
-CONFIDENCE_THRESHOLD = _float("CONFIDENCE_THRESHOLD", 0.2)              # visual (CLIP)
-TEXT_CONFIDENCE_THRESHOLD = _float("TEXT_CONFIDENCE_THRESHOLD", 0.35)  # transcript (bge)
+# Defaults come from the chosen provider's preset because cosine scale is
+# model-specific — a threshold tuned for CLIP would make another embedder
+# abstain on perfectly good matches. Providers we haven't calibrated default to
+# 0 (gate off, never a wrong abstention); measure yours with benchmark/score.py
+# and set these explicitly.
+CONFIDENCE_THRESHOLD = _float("CONFIDENCE_THRESHOLD", _IMG.threshold)       # visual
+TEXT_CONFIDENCE_THRESHOLD = _float("TEXT_CONFIDENCE_THRESHOLD", _TXT.threshold)  # transcript
 
 # --- Multimodal LLM (answer synthesis only — retrieval works without it) -----------
-# LLM_PROVIDER: openai | nvidia | anthropic ("openai" also covers any
-# OpenAI-compatible server via LLM_BASE_URL: Ollama, vLLM, OpenRouter, ...).
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
-LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").strip()
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini").strip()
+# LLM_PROVIDER is a name from registry.LLM_PRESETS — openai, gemini, anthropic,
+# openrouter, xai (grok), groq, together, fireworks, mistral, nvidia,
+# azure_openai, ollama, lmstudio, vllm, custom — plus aliases ("grok", "claude",
+# "google", "azure"). The preset supplies the endpoint and a default model, and
+# the key is read from that provider's conventional env var (GEMINI_API_KEY,
+# OPENROUTER_API_KEY, XAI_API_KEY, ...) when LLM_API_KEY is unset. Set
+# LLM_BASE_URL to point any OpenAI-shaped provider at your own server.
+LLM_PROVIDER = registry.llm_provider_key(os.getenv("LLM_PROVIDER", "").strip() or "openai")
+_LLM = registry.llm_preset(LLM_PROVIDER)
+LLM_API_KEY = _first_env("LLM_API_KEY", *_LLM.key_envs)
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").strip()   # raw: preset fills it later
+LLM_MODEL = os.getenv("LLM_MODEL", "").strip() or _LLM.default_model
 LLM_MAX_TOKENS = _int("LLM_MAX_TOKENS", 1024)
 LLM_IMAGE_MAX_PX = _int("LLM_IMAGE_MAX_PX", 512)  # frames are downscaled again before the LLM
 
 
 def llm_configured() -> bool:
-    # Local OpenAI-compatible servers often need no key, so a base_url alone counts.
-    return bool(LLM_API_KEY or LLM_BASE_URL)
+    """Is there a server-wide answer model at all? (No = retrieval-only mode,
+    which is a supported way to run MomentSearch, not an error.)
+
+    Deliberately does NOT count a preset's built-in endpoint: every hosted
+    preset ships a base_url, so counting it would claim every provider is
+    configured and turn each /api/ask into a 401 instead of the retrieval-only
+    fallback. Self-hosted presets (Ollama/LM Studio/vLLM) need no key, so
+    naming one IS the configuration.
+    """
+    if LLM_API_KEY or LLM_BASE_URL:
+        return True
+    return not _LLM.requires_key and bool(_LLM.base_url)
