@@ -50,9 +50,23 @@ def wait_for_clip(timeout: int = 600) -> None:
     print("[seed] CLIP service not ready in time — attempting anyway", flush=True)
 
 
+def _frames_present(vid: str) -> bool:
+    """True when a sample's frames are fully in place at the CURRENT keys — the
+    thumbnail (frame 0) in object storage AND frame vectors in Qdrant. Lets the
+    seed adopt a stuck-but-complete row instead of re-ingesting it."""
+    try:
+        return (storage.exists(storage.frame_key(config.DEFAULT_USER_ID, vid, 0))
+                and bool(vector_store.frame_times(config.DEFAULT_USER_ID, vid)))
+    except Exception:
+        return False
+
+
 def _not_indexed() -> list[dict]:
     """Samples that still need (re)ingest: never indexed, indexed on a DIFFERENT
     embedding version, OR indexed but with frames NOT at the current key layout.
+    A row stuck mid-flight but whose frames are all present is adopted as indexed
+    (see _frames_present) rather than re-ingested — a stuck sample must never
+    abort a deploy by timing out the release-command seed.
 
     EMBED_VERSION is derived from the visual provider + model, so switching either
     one bumps it and auto-re-seeds all four samples. The layout probe covers the
@@ -65,14 +79,27 @@ def _not_indexed() -> list[dict]:
         row = db.get_video(vid) or {}
         ev = row.get("embed_version")
         stale = ev is not None and ev != config.EMBED_VERSION
+        status = row.get("status")
+
+        # Self-heal a stuck-but-complete row. A sample left mid-flight (a worker
+        # or the deploy's release machine killed during embed) sits in
+        # fetching/sampling/embedding forever even though its frames are actually
+        # all there. Re-ingesting it on the release machine means an in-process
+        # re-embed + YouTube re-download that blows past the release timeout and
+        # ABORTS THE WHOLE DEPLOY. So: if the frames are present at the current
+        # keys/version, adopt the row as indexed instead of re-ingesting it.
+        if row and status != "indexed" and not stale and _frames_present(vid):
+            db.set_status(vid, "indexed", embed_version=config.EMBED_VERSION, progress=1.0)
+            continue
+
         misplaced = False
-        if row.get("status") == "indexed" and not stale:
+        if status == "indexed" and not stale:
             try:  # frame 0 always exists for an indexed video — probe the new key
                 misplaced = not storage.exists(
                     storage.frame_key(config.DEFAULT_USER_ID, vid, 0))
             except Exception:
                 misplaced = False
-        if row.get("status") != "indexed" or stale or misplaced:
+        if status != "indexed" or stale or misplaced:
             out.append(v)
     return out
 

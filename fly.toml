@@ -22,6 +22,10 @@ primary_region = 'iad'
   # service isn't up yet, so CLIP_SERVICE_URL= forces in-process embedding.
   # Idempotent + durable (Qdrant Cloud): real work happens only on first deploy.
   release_command = "sh -c 'CLIP_SERVICE_URL= python -m src.seed'"
+  # Headroom for a genuine first-deploy index (4 talks embedded in-process). A
+  # stuck-but-complete sample is adopted, not re-ingested (src/seeding.py), so
+  # this only bites on a truly-fresh Qdrant.
+  release_command_timeout = "12m"
 
 [processes]
   api = 'uvicorn src.app:app --host 0.0.0.0 --port 8000'

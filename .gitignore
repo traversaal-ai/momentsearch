@@ -31,6 +31,10 @@ benchmark/
 
 # Internal design notes (not published)
 MULTIMODAL_RETRIEVAL.md
+PRODUCTION_HANDOFF.md
+RETRIEVAL_BACKLOG.md
+OVERVIEW.md
+AI_ARCHITECTURE.md
 
 # OS / editor
 .DS_Store
