@@ -224,8 +224,21 @@ IMAGE_EMBED_CONCURRENCY = _int("IMAGE_EMBED_CONCURRENCY", 8)
 # -> in-process embedding (simple mode, no extra service). Point it at a GPU
 # machine later — nothing else changes. Ignored for hosted providers: an API
 # has no weights to keep warm, so it is called directly.
-EMBED_SERVICE_URL = (os.getenv("EMBED_SERVICE_URL", "").strip()
-                     or os.getenv("CLIP_SERVICE_URL", "").strip()).rstrip("/")
+# An explicit EMBED/CLIP_SERVICE_URL wins (docker-compose sets http://clip:8001;
+# the Fly release_command sets it EMPTY to force in-process seeding — a
+# present-but-empty value is a deliberate choice, kept distinct from unset). On
+# Fly with neither set, derive the clip machine's internal address from Fly's own
+# FLY_APP_NAME, so renaming the app touches only the `app =` line in fly.toml and
+# nothing hardcodes the name. Unset off Fly -> in-process embedding.
+_svc = os.environ.get("EMBED_SERVICE_URL")
+if _svc is None:
+    _svc = os.environ.get("CLIP_SERVICE_URL")
+if _svc is not None:
+    EMBED_SERVICE_URL = _svc.strip().rstrip("/")
+elif os.environ.get("FLY_APP_NAME"):
+    EMBED_SERVICE_URL = f"http://clip.process.{os.environ['FLY_APP_NAME']}.internal:8001"
+else:
+    EMBED_SERVICE_URL = ""
 CLIP_SERVICE_URL = EMBED_SERVICE_URL   # legacy alias
 # Stamped on every Qdrant point so a re-embed can find stale vectors. Keeps the
 # historical "<model>-v1" form for CLIP so existing indexes aren't invalidated.
@@ -378,6 +391,13 @@ YT_REMOTE_COMPONENTS = [c.strip() for c in
 # (src/samples.py) if they aren't indexed yet — a fresh clone is queryable on
 # the / page without running anything by hand. Set false to skip.
 SEED_SAMPLE_VIDEOS = _envbool("SEED_SAMPLE_VIDEOS", True)
+# Best-effort by default: if seeding can't finish (e.g. a fresh clone with no
+# YouTube cookies), the seed exits 0 and the deploy proceeds — the app goes live
+# and /demo just stays empty until the samples get indexed, instead of the whole
+# deploy aborting. Set true to restore the hard gate (an incomplete seed fails
+# the deploy / docker-compose start, guaranteeing users never see a half-indexed
+# corpus). Ignored when SEED_SAMPLE_VIDEOS=false (nothing to seed).
+SEED_STRICT = _envbool("SEED_STRICT", False)
 
 # --- Work orchestration (Prefect Cloud) ----------------------------------------
 # The SDK reads PREFECT_API_URL / PREFECT_API_KEY from the environment directly.

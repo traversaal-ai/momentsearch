@@ -34,11 +34,13 @@ primary_region = 'iad'
   # CLIP_SERVICE_URL) is IPv6-only; 0.0.0.0 would be unreachable internally.
   clip = 'uvicorn src.clip_service:app --host :: --port 8001'
 
-[env]
-  # Fly private networking: <process>.process.<app>.internal resolves to the
-  # clip machine. api + worker send embed batches there (one warm model);
-  # clip_service itself ignores this and always runs the model locally.
-  CLIP_SERVICE_URL = 'http://clip.process.momentsearch.internal:8001'
+# The clip machine's internal address (Fly private networking:
+# <process>.process.<app>.internal) is DERIVED at runtime from Fly's own
+# FLY_APP_NAME in src/config.py — so renaming this app touches ONLY the `app =`
+# line above, never a hardcoded host here. api + worker send embed batches to
+# that one warm model; the clip process ignores it and runs the model locally.
+# (To pin a different embedder host — e.g. a GPU box — set EMBED_SERVICE_URL as
+# a secret and it wins over the derived address.)
 
 # Infra backstop: if a machine's process ever exits (crash, OOM, a dependency
 # outage that slips past the code's own retry loop), always bring it back —

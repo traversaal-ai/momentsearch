@@ -133,14 +133,18 @@ Two pages, one app:
 | **`/`** | **Sample project — "A Deep Dive into LLMs."** Four LLM talks, pre-indexed, read-only. |
 | **`/get-started`** | **Bring your own videos.** Add a YouTube URL or upload a file, then ask. |
 
-**The sample corpus is a startup gate.** A one-shot `seed` service indexes the
-four talks and must finish before `api`/`worker` start — so when
-`http://localhost:8000` first answers, the samples are already queryable, never
-half-done. First run takes a few minutes (model download + 4 videos); watch it
-with `docker compose logs -f seed`. It's durable (Qdrant Cloud) and idempotent,
-so every later `up` finds them indexed and starts in seconds. Set
-`SEED_SAMPLE_VIDEOS=false` to skip the gate; `python examples/quickstart.py`
-is the manual route (also runs sample queries in the terminal).
+**The sample corpus is a startup step.** A one-shot `seed` service indexes the
+four talks before `api`/`worker` start — so when `http://localhost:8000` first
+answers, the samples are already queryable. First run takes a few minutes (model
+download + 4 videos); watch it with `docker compose logs -f seed`. It's durable
+(Qdrant Cloud) and idempotent, so every later `up` finds them indexed and starts
+in seconds. It's **best-effort by default** (`SEED_STRICT=false`): if seeding
+can't finish — e.g. a fresh clone whose empty Qdrant forces a live YouTube
+re-index without cookies — it logs loudly and the app still starts with an empty
+`/demo`, instead of blocking. Set `SEED_STRICT=true` to make it a hard gate
+(never serve a half-indexed corpus), or `SEED_SAMPLE_VIDEOS=false` to skip
+seeding entirely (bare deploy — upload your own videos). `python
+examples/quickstart.py` is the manual route (also runs sample queries in the terminal).
 
 > The gate is wired into `docker compose up` (via `depends_on`) and Fly (via
 > `release_command`) — use one of those. A bare `docker run` of the image only

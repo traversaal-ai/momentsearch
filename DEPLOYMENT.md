@@ -94,9 +94,11 @@ fly auth whoami
 fly apps create momentsearch --org personal
 ```
 
-If the name is taken, pick another (e.g. `momentsearch-<you>`) and update **two
-places** in `fly.toml`: the `app = '…'` line and the `CLIP_SERVICE_URL`
-internal-DNS host (`clip.process.<app-name>.internal`).
+Fly app names are **globally unique**, so `momentsearch` is already taken — pick
+your own (e.g. `momentsearch-<you>`) and set it in **one** place: the
+`app = '…'` line in `fly.toml`. That's it — the clip service's internal address
+is derived from the app name at runtime (Fly injects `FLY_APP_NAME`), so there's
+nothing else to rename.
 
 ### 3. Push secrets (once, and whenever they change)
 
@@ -134,11 +136,15 @@ fly deploy --ha=false
 > `registry.fly.io`. Alternatively, verify the account at
 > <https://fly.io/high-risk-unlock> to use the remote builder.
 
-On deploy, fly.toml's `release_command` runs the **seed gate** first
+On deploy, fly.toml's `release_command` runs the **seed step** first
 (`python -m src.seed`). Because the samples are already indexed in your shared
-Qdrant/Neon, it exits in seconds and the app goes live. If it can't verify the
-samples it aborts and the previous version keeps serving — you never get a
-half-indexed app.
+Qdrant/Neon, it exits in seconds and the app goes live. On a **fresh clone**
+(empty Qdrant) it instead re-indexes the four sample talks in-process; if that
+can't finish (e.g. no YouTube cookies) it's **best-effort by default** — it logs
+loudly and the deploy still proceeds with an empty `/demo`, rather than aborting.
+Set `SEED_STRICT=true` to restore the hard gate (an incomplete seed aborts the
+deploy and the previous version keeps serving — you never get a half-indexed
+app), or `SEED_SAMPLE_VIDEOS=false` to skip sample seeding entirely.
 
 ### 5. Open it
 
@@ -195,9 +201,15 @@ the clip service) is a burst cost only — rent it for a big backfill, kill it a
   `fly deploy --ha=false --local-only` (needs Docker Desktop running), or unlock
   the account at <https://fly.io/high-risk-unlock>. This is a builder/account
   issue, not a code issue — the same image builds fine locally.
-- **Deploy aborts on release_command** → the seed gate couldn't verify samples.
-  Check `fly logs`; usually a bad `DATABASE_URL`/`QDRANT_URL` secret. Set
-  `SEED_SAMPLE_VIDEOS=false` to skip the gate if you need to deploy anyway.
+- **Deploy aborts on release_command** → only happens with `SEED_STRICT=true`
+  (the hard gate): the seed couldn't verify samples. Check `fly logs`; usually a
+  bad `DATABASE_URL`/`QDRANT_URL` secret, or a fresh Qdrant with no YouTube
+  cookies. Fix the secret, drop `SEED_STRICT` (best-effort: deploy proceeds with
+  an empty `/demo`), or set `SEED_SAMPLE_VIDEOS=false` to skip seeding entirely.
+- **`/demo` is empty after a fresh deploy** → best-effort seeding let the deploy
+  through without indexing the samples (see `fly logs` for the loud `[seed]`
+  message). Almost always missing YouTube cookies (`YT_COOKIES_B64`) on an empty
+  Qdrant. Set the cookies and redeploy, or upload your own videos.
 - **YouTube ingest fails on Fly** → datacenter IP is blocked; make sure
   `YT_COOKIES_B64` is set (step 3). Cookies expire in ~2–3 weeks; re-run the
   `fly secrets set YT_COOKIES_B64=…` command to refresh. Uploads are unaffected.
