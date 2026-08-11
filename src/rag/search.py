@@ -128,6 +128,7 @@ def _rerank(question: str, windows: list[dict]) -> list[dict]:
 
     max_rrf = max((w["rrf"] for w in windows), default=0.0) or 1.0
     wt = config.RERANK_WEIGHT
+    lo, hi = config.CONFIDENCE_THRESHOLD, config.VISUAL_STRONG
     rel = {i: 1.0 / (1.0 + math.exp(-s)) for i, s in zip(cand, raw)}
     for i, w in enumerate(windows):
         rr = w["rrf"] / max_rrf
@@ -135,7 +136,13 @@ def _rerank(question: str, windows: list[dict]) -> list[dict]:
             w["rerank"] = round(rel[i], 4)
             w["blend"] = wt * rel[i] + (1.0 - wt) * rr
         else:
-            w["blend"] = rr            # frame-only / unjudged: keep RRF standing
+            # Frame-only / unjudged: weight its RRF standing by HOW STRONG the raw
+            # visual match is. A talking-head frame that barely cleared the gate
+            # must not outrank a clearly-relevant transcript moment; a real visual
+            # answer (a slide/diagram) still can. conf: 0 at the gate → 1 at STRONG.
+            vis = (w.get("frame") or {}).get("score", 0.0)
+            conf = 1.0 if hi <= lo else max(0.0, min(1.0, (vis - lo) / (hi - lo)))
+            w["blend"] = rr * conf
     windows.sort(key=lambda w: w["blend"], reverse=True)
     return windows
 

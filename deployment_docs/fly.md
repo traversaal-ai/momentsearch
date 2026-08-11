@@ -8,10 +8,31 @@ Deploys **one Docker image** as **three process groups** (`api`, `worker`, `clip
 - `QDRANT_URL` + `QDRANT_API_KEY` — Qdrant Cloud (vectors; collections `moments_l14` + `moments_text_openai` auto-created)
 - `PREFECT_API_URL` + `PREFECT_API_KEY` — Prefect Cloud (work queue)
 - `OPENAI_API_KEY` (or `LLM_API_KEY`) — answer model (`gpt-4o`), transcript embeddings (`text-embedding-3-small`), ASR (`whisper-1`). **Required** — the default transcript branch needs it; set `TEXT_EMBED_PROVIDER=fastembed` for a keyless CPU branch.
-- `STORAGE_PROVIDER=gcp_native` + `GOOGLE_CLOUD_*` — GCS bucket `momentsearch-media` (video files under `{user}/{video}/`)
+- **Object storage** — Fly-native **Tigris** (`fly storage create` → `STORAGE_PROVIDER=flyio`) or **GCS** (`STORAGE_PROVIDER=gcp_native` + `GOOGLE_CLOUD_*`). Holds video files under `{user}/{video}/`. See [Object storage](#object-storage-bucket)
 - `GEMINI_API_KEY` — *optional*, speaker recognition
 - `YT_COOKIES_B64` — *optional*, YouTube ingest (Fly datacenter IP is bot-checked)
 - A **Fly.io account** + `flyctl` CLI
+
+## Object storage (bucket)
+
+Video files, frame thumbnails and transcripts live in a **private** bucket under
+`{user}/{video}/`. Pick one:
+
+**Fly-native (Tigris) — one command, zero external signup:**
+
+```bash
+fly storage create      # provisions Tigris + injects the AWS_*/BUCKET_NAME secrets
+fly secrets set STORAGE_PROVIDER=flyio
+```
+
+**GCS** (what production uses): `STORAGE_PROVIDER=gcp_native` + the `GOOGLE_CLOUD_*`
+service-account vars + `STORAGE_BUCKET`. **S3** also works: `STORAGE_PROVIDER=aws`
++ `STORAGE_BUCKET`/`STORAGE_REGION`/`STORAGE_ACCESS_KEY_ID`/`STORAGE_SECRET_ACCESS_KEY`.
+
+Browser uploads are presigned `PUT`s straight to the bucket, so add a **CORS rule**
+allowing `PUT`/`GET` from your app's origin — Tigris: `fly storage dashboard` →
+your bucket → CORS; GCS/S3: see `.env.example`. Keep the bucket **private**; reads
+use presigned GETs.
 
 ## Deploy
 

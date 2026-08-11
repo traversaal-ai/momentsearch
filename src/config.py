@@ -473,6 +473,12 @@ KNN_K = _int("KNN_K", 24)                # candidates fetched before trimming to
 # and set these explicitly.
 CONFIDENCE_THRESHOLD = _float("CONFIDENCE_THRESHOLD", _IMG.threshold)       # visual
 TEXT_CONFIDENCE_THRESHOLD = _float("TEXT_CONFIDENCE_THRESHOLD", _TXT.threshold)  # transcript
+# Raw visual score at which a frame counts as a STRONG match. The reranker weights
+# a frame-only moment between CONFIDENCE_THRESHOLD (weak, ~0) and this (strong, 1),
+# so a talking-head frame that barely cleared the gate can't outrank a clearly-
+# relevant transcript moment, while a real visual answer (a slide/diagram) still
+# wins. Only affects ranking when the reranker runs; pure-visual videos unchanged.
+VISUAL_STRONG = _float("VISUAL_STRONG", 0.45)
 
 # --- Multimodal LLM (answer synthesis only — retrieval works without it) -----------
 # LLM_PROVIDER is a name from registry.LLM_PRESETS — openai, gemini, anthropic,
