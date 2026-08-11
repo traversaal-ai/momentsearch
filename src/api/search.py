@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from .. import config, db, llm, storage
 from ..providers import status as provider_status
+from ..providers.embed.base import EmbedUnavailable
 from ..rag import search as rag_search
 from ..samples import is_sample
 from .videos import require_auth, user_id as user_id_dep
@@ -25,14 +26,17 @@ router = APIRouter(tags=["search"])
 
 UI_DIR = Path(__file__).resolve().parents[2] / "ui"
 _FRAME_RE = re.compile(r"^\d{6}\.jpg$")
-_USER_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _uid(value: str | None) -> str:
-    uid = (value or config.DEFAULT_USER_ID).strip()
-    if not _USER_RE.match(uid):
-        raise HTTPException(400, "Invalid user id.")
-    return uid
+    """The tenant a frame/media URL belongs to — always the one account.
+
+    Single-user: the `?u=` parameter these URLs still carry is ignored rather
+    than trusted, so a hand-edited one can't read outside the account. The
+    parameter itself stays in the signatures because the stored citation
+    deeplinks and thumbnail URLs already contain it.
+    """
+    return config.SINGLE_USER_ID
 
 
 # ── Meta ─────────────────────────────────────────────────────────────────────
@@ -182,9 +186,14 @@ def ask(req: AskRequest, uid: str = Depends(user_id_dep)):
     # Empty list == "nothing selected" -> treat as all (None); avoids a
     # confusing zero-results answer when the user unchecks everything.
     video_ids = req.video_ids or None
-    return rag_search.ask(req.question.strip(), uid,
-                          top_k=req.top_k, video_id=req.video_id,
-                          video_ids=video_ids)
+    # 503 + the fix, not a bare 500 — see EmbedUnavailable. This is the first
+    # thing a fresh clone hits if it skipped `pip install -r requirements.txt`.
+    try:
+        return rag_search.ask(req.question.strip(), uid,
+                              top_k=req.top_k, video_id=req.video_id,
+                              video_ids=video_ids)
+    except EmbedUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 # ── Transcript (full timed transcript for the synced player panel) ───────────
@@ -281,12 +290,13 @@ def video(video_id: str, u: str | None = None,
 def _page(name: str, mode: str = "") -> str:
     """Serve one of the UI's pages, injecting its mode where the page wants it.
 
-    Four pages, each a plain file in ui/ (no build step — see app.py's /ui mount
+    Three pages, each a plain file in ui/ (no build step — see app.py's /ui mount
     for the shared stylesheet and scripts):
-      landing.html  /         what MomentSearch is; try the demo or sign in
-      demo.html     /demo     the shared sample corpus, open to anyone
-      signin.html   /signin   email -> workspace
-      app.html      /app      signed in: sessions, playground, uploads
+      landing.html  /         what MomentSearch is; one door into the workspace
+      demo.html     /demo     the shared sample corpus, read-only
+      app.html      /app      the workspace: sessions, playground, uploads
+
+    There is no sign-in page: this deployment is single-user (src/api/auth.py).
     """
     page = UI_DIR / name
     if not page.exists():
@@ -305,18 +315,24 @@ def demo():
     return _page("demo.html", "sample")
 
 
-@router.get("/signin", response_class=HTMLResponse)
-def signin():
-    return _page("signin.html")
-
-
 @router.get("/app", response_class=HTMLResponse)
 def app_page():
     return _page("app.html")
 
 
+@router.get("/signin", response_class=HTMLResponse)
+def signin():
+    """There is no sign-in any more — the workspace IS the front door.
+
+    Redirected rather than deleted: this address is in bookmarks, in the README
+    and in old browser history, and landing on the workspace is what someone
+    following it wanted anyway. Same reason /get-started still resolves.
+    """
+    return RedirectResponse("/app", status_code=307)
+
+
 @router.get("/get-started", response_class=HTMLResponse)
 def get_started():
-    """Kept: it was the bring-your-own-videos URL. Signed-in work lives at /app
-    now, so send people there rather than 404 an address that may be shared."""
+    """Kept: it was the bring-your-own-videos URL. The work lives at /app now,
+    so send people there rather than 404 an address that may be shared."""
     return RedirectResponse("/app", status_code=307)

@@ -1,4 +1,4 @@
-"""Video registration API — the write path's front door (Bearer auth).
+"""Video registration API — the write path's front door.
 
 Upload flow (gigabytes never touch this process):
   1. POST /api/videos/presign   -> scoped, time-limited PUT URL (server picks
@@ -9,9 +9,9 @@ Upload flow (gigabytes never touch this process):
 
 YouTube flow: POST /api/videos {"url": ...} — the worker downloads it.
 
-Every request is tenant-scoped by the X-User-Id header (default "default");
-swap that for real per-user auth later — keys, rows and vectors are already
-user_id-tagged.
+Single-user: every request acts as config.SINGLE_USER_ID (see user_id() below).
+Keys, rows and vectors are still user_id-tagged throughout, so restoring real
+per-user auth is a change to that one function — not to the data model.
 """
 from __future__ import annotations
 
@@ -19,63 +19,44 @@ import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import config, db, jobs, storage
-from .auth import workspace_from_token
 from ..samples import is_sample
 from ..config import (
-    ADMIN_TOKEN,
     ALLOWED_UPLOAD_TYPES,
-    DEFAULT_USER_ID,
     MAX_UPLOAD_MB,
+    SINGLE_USER_ID,
 )
 from ..rag import vector_store
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
-_USER_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-# Ids minted by /api/auth/demo. Reserved: reaching one requires its token.
-_WORKSPACE_PREFIX = "u_"
 _EXT_RE = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
 _YT_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?v=|shorts/|live/|embed/)|youtu\.be/)([A-Za-z0-9_-]{11})")
 
 
-def require_auth(authorization: str | None = Header(default=None)) -> None:
-    """A signed demo session authorizes writes to ITS OWN workspace (user_id
-    comes from the same token, below — it can't write into anyone else's).
-    Otherwise fall back to the server-wide ADMIN_TOKEN."""
-    if workspace_from_token(authorization):
-        return
-    if not ADMIN_TOKEN:  # dev convenience — set ADMIN_TOKEN in any real deploy
-        return
-    if authorization != f"Bearer {ADMIN_TOKEN}":
-        raise HTTPException(401, "Missing or invalid bearer token.")
+def require_auth() -> None:
+    """No-op: this deployment is single-user and unauthenticated.
 
-
-def user_id(x_user_id: str | None = Header(default=None),
-            authorization: str | None = Header(default=None)) -> str:
-    """The tenant this request acts as.
-
-    A signed session token WINS over X-User-Id: the workspace is proven by the
-    signature, so a browser can't reach another one by editing a header. The
-    header path stays for scripts, curl and local dev (no token = the default
-    tenant, exactly as before sign-in existed).
+    Kept as a dependency on every mutating route so the enforcement point still
+    EXISTS — restoring auth is editing this one function, not re-threading
+    `Depends(...)` through two dozen endpoints. See src/api/auth.py for the
+    warning that goes with it: reaching the port is owning the account.
     """
-    signed = workspace_from_token(authorization)
-    if signed:
-        return signed
-    uid = (x_user_id or DEFAULT_USER_ID).strip()
-    if not _USER_RE.match(uid):
-        raise HTTPException(400, "Invalid X-User-Id.")
-    # A sign-in workspace (u_<uuid>) can ONLY be reached with its token.
-    # Otherwise guessing an id would be enough to read someone's library, since
-    # the read endpoints are deliberately open for the anonymous demo tenant.
-    if uid.startswith(_WORKSPACE_PREFIX):
-        raise HTTPException(401, "That workspace needs its session token.")
-    return uid
+    return
+
+
+def user_id() -> str:
+    """The tenant every request acts as — always the one account.
+
+    X-User-Id and Authorization are no longer read at all. Ignoring them rather
+    than honouring them is the point: a stale header from an old browser tab (or
+    a hand-edited one) can't steer reads or writes at some other tenant's data.
+    """
+    return SINGLE_USER_ID
 
 
 # ── Presign ───────────────────────────────────────────────────────────────────
@@ -226,8 +207,8 @@ def _public(row: dict) -> dict:
 
 @router.get("")
 def list_videos(uid: str = Depends(user_id), status: str | None = None):
-    # Samples ride along in every workspace (read-only, undeletable) so a new
-    # sign-in has something to search before it has ingested anything.
+    # Samples ride along (read-only, undeletable) so the app has something to
+    # search before anything has been ingested.
     rows = db.list_videos(uid, status=status, include_samples=True)
     return {"videos": [_public(r) for r in rows]}
 

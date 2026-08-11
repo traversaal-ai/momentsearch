@@ -1,6 +1,6 @@
 """Sessions — a folder of videos plus the chat about them.
 
-    GET    /api/sessions                 list (seeds "Demo videos" on first call)
+    GET    /api/sessions                 list (bootstraps first run — see below)
     POST   /api/sessions                 new, EMPTY session
     GET    /api/sessions/{id}            session + its videos + its chat
     PATCH  /api/sessions/{id}            rename
@@ -20,13 +20,18 @@ Two rules shape this file:
 """
 from __future__ import annotations
 
+import json
+import queue
+import threading
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .. import db
 from ..config import INFLIGHT_STATUSES
+from ..providers.embed.base import EmbedUnavailable
 from ..rag import search as rag_search
 from ..samples import SAMPLE_VIDEOS, is_sample, sample_video_id
 from .videos import _public, purge_video, require_auth, user_id
@@ -34,6 +39,10 @@ from .videos import _public, purge_video, require_auth, user_id
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 DEMO_TITLE = "Demo videos"
+# The session first-run lands in. Named, not "Untitled", so the workspace never
+# looks broken on arrival — and renameable, because naming it is the first thing
+# someone with a real project wants to do.
+FIRST_SESSION_TITLE = "My first search"
 _MAX_TITLE = 120
 
 
@@ -65,18 +74,29 @@ def _link_samples(session_id: str) -> None:
         db.add_session_video(session_id, vid)
 
 
-def _seed_demo_session(uid: str) -> None:
-    """Give a workspace with NO sessions the read-only demo one, so a fresh
-    sign-in can chat immediately."""
-    sid = f"s_{uuid.uuid4().hex}"
-    db.create_session(sid, uid, DEMO_TITLE, kind="demo")
-    _link_samples(sid)
+def _seed_first_run(uid: str) -> None:
+    """Bootstrap a workspace that has never had a session.
+
+    TWO sessions, in this order, because the order decides where onboarding
+    starts: `list_sessions` is newest-first, so the empty own session is row 0
+    and the UI opens it at step 1 ("add a video") — which is the flow we want a
+    first-time cloner in. The demo session is created first and sits behind it as
+    the escape hatch for someone with no video to hand: it is already indexed, so
+    it can answer a question immediately.
+
+    Only ever runs on a workspace with ZERO sessions, so deleting the starter
+    session doesn't make it reappear — that would fight the user.
+    """
+    demo = f"s_{uuid.uuid4().hex}"
+    db.create_session(demo, uid, DEMO_TITLE, kind="demo")
+    _link_samples(demo)
+    db.create_session(f"s_{uuid.uuid4().hex}", uid, FIRST_SESSION_TITLE)
 
 
 def _sync_demo_session(rows: list[dict]) -> None:
-    """Self-heal an empty/partial demo session. If a workspace's demo session was
-    created before the samples were indexed (e.g. a signup during a re-seed), it
-    would be empty forever — _seed_demo_session only runs on a workspace with NO
+    """Self-heal an empty/partial demo session. If the demo session was created
+    before the samples were indexed (e.g. a first visit during a re-seed), it
+    would be empty forever — _seed_first_run only runs on a workspace with NO
     sessions. So whenever the demo session is missing samples, back-fill them."""
     demo = next((r for r in rows if r.get("kind") == "demo"), None)
     if demo and (demo.get("video_count") or 0) < len(SAMPLE_VIDEOS):
@@ -97,7 +117,7 @@ class Rename(BaseModel):
 def list_sessions(uid: str = Depends(user_id)):
     rows = db.list_sessions(uid)
     if not rows:                      # first visit (or they deleted everything)
-        _seed_demo_session(uid)
+        _seed_first_run(uid)
         rows = db.list_sessions(uid)
     else:                             # back-fill a demo session seeded while empty
         _sync_demo_session(rows)
@@ -151,7 +171,10 @@ def delete(session_id: str, uid: str = Depends(user_id)):
         if row is None or row["user_id"] != uid:
             continue
         if db.count_video_sessions(vid) == 0:
-            purge_video(vid, uid, row)
+            # Two args, not three: purge_video looks nothing up from the row, and
+            # passing it raised TypeError here — 500ing AFTER the session row was
+            # already deleted, which orphaned the video's vectors and files.
+            purge_video(vid, uid)
             purged.append(vid)
     return {"ok": True, "session_id": session_id, "purged": purged}
 
@@ -188,13 +211,13 @@ class Ask(BaseModel):
     video_ids: list[str] | None = None  # checked subset; None = every ready video
 
 
-@router.post("/{session_id}/ask")
-def session_ask(session_id: str, req: Ask, uid: str = Depends(user_id)):
-    """One chat turn, scoped to this session's videos and stored in its chat.
+def _answer_turn(session_id: str, req: Ask, uid: str, on_stage=None) -> dict:
+    """Run one question end to end and persist both sides of the turn.
 
-    Each question searches on its own — history is shown, not fed to the model.
-    So an answer stays grounded in retrieved moments, and re-reading the session
-    later shows exactly the moments each answer cited.
+    Shared by the plain and the streaming endpoint so there is exactly ONE
+    implementation of the scope rules, the honest empty-session answers and the
+    persistence — the streaming route only differs in how it reports progress.
+    Returns the stored assistant message.
     """
     _require(session_id, uid)
     question = req.question.strip()
@@ -222,7 +245,7 @@ def session_ask(session_id: str, req: Ask, uid: str = Depends(user_id)):
         row = db.add_message(session_id, "assistant", answer,
                              citations=[], meta={"empty": True, "llm_used": False})
         db.touch_session(session_id)
-        return {"message": _message_out(row)}
+        return _message_out(row)
 
     # Per-video selection: the workspace can UNCHECK videos to drop them from a
     # question without removing or deleting them. None = search all ready videos;
@@ -240,9 +263,16 @@ def session_ask(session_id: str, req: Ask, uid: str = Depends(user_id)):
             row = db.add_message(session_id, "assistant", answer,
                                  citations=[], meta={"empty": True, "llm_used": False})
             db.touch_session(session_id)
-            return {"message": _message_out(row)}
+            return _message_out(row)
 
-    result = rag_search.ask(question, uid, top_k=req.top_k, video_ids=scope)
+    # A missing embedder is a broken install, not a bad question — so it must not
+    # be written into the chat as if it were an answer, and it must not surface as
+    # a bare 500. 503 + the fix, which is what a fresh clone needs to read.
+    try:
+        result = rag_search.ask(question, uid, top_k=req.top_k, video_ids=scope,
+                                **({"on_stage": on_stage} if on_stage else {}))
+    except EmbedUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     citations = result.get("citations") or []
     meta = {k: result.get(k) for k in
             ("llm_used", "abstained", "llm_source", "llm_model", "note")
@@ -251,4 +281,66 @@ def session_ask(session_id: str, req: Ask, uid: str = Depends(user_id)):
     row = db.add_message(session_id, "assistant", result.get("answer") or "",
                          citations=citations, meta=meta)
     db.touch_session(session_id)
-    return {"message": _message_out(row)}
+    return _message_out(row)
+
+
+@router.post("/{session_id}/ask")
+def session_ask(session_id: str, req: Ask, uid: str = Depends(user_id)):
+    """One turn, scoped to this session's videos and stored in its chat.
+
+    Each question searches on its own — history is stored, not fed to the model.
+    So an answer stays grounded in retrieved moments, and the moments each answer
+    cited are exactly what was stored with it.
+    """
+    return {"message": _answer_turn(session_id, req, uid)}
+
+
+@router.post("/{session_id}/ask_stream")
+def session_ask_stream(session_id: str, req: Ask, uid: str = Depends(user_id)):
+    """Same turn, but reports what the server is doing while it does it.
+
+    Server-Sent Events, one JSON object per event:
+        {"type":"stage","stage":"searching","detail":"..."}   as each stage BEGINS
+        {"type":"done","message":{...}}                        the stored message
+        {"type":"error","detail":"..."}                        setup/pipeline failure
+
+    The stages come from real boundaries inside rag.search (on_stage), never from
+    a timer — so a label on screen always names what is actually happening, and a
+    slow stage visibly stays put instead of a fake progress bar sliding on.
+
+    The pipeline is blocking, so it runs in a worker thread and pushes events
+    through a queue that this generator drains. `_require` runs FIRST, on this
+    thread, so a bad session id is still a clean 404 rather than an error event.
+    """
+    _require(session_id, uid)
+    events: queue.Queue = queue.Queue()
+
+    def work():
+        try:
+            msg = _answer_turn(session_id, req, uid,
+                               on_stage=lambda stage, detail="": events.put(
+                                   {"type": "stage", "stage": stage, "detail": detail}))
+            events.put({"type": "done", "message": msg})
+        except HTTPException as exc:
+            events.put({"type": "error", "detail": str(exc.detail)})
+        except Exception as exc:                      # never leave the UI hanging
+            events.put({"type": "error", "detail": f"{type(exc).__name__}: {exc}"})
+        finally:
+            events.put(None)                          # sentinel: close the stream
+
+    threading.Thread(target=work, daemon=True).start()
+
+    def stream():
+        while True:
+            item = events.get()
+            if item is None:
+                return
+            # SSE frame: "data: <json>" terminated by a BLANK line.
+            yield "data: " + json.dumps(item, default=str) + "\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      # nginx/Fly buffer SSE by default, which
+                                      # would deliver every stage in one lump at
+                                      # the end and defeat the point.
+                                      "X-Accel-Buffering": "no"})

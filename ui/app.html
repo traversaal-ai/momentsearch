@@ -4,6 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Workspace · MomentSearch</title>
+<link rel="icon" href="/ui/assets/traversaal-mark.png">
+<link rel="apple-touch-icon" href="/ui/assets/traversaal-mark.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -17,111 +19,250 @@
 </script>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
-<body class="h-screen bg-paper text-ink flex flex-col overflow-hidden" data-pane="chat">
+<body class="h-screen bg-paper text-ink flex flex-col overflow-hidden" data-step="1" data-ans="0">
 
 <div class="grain" aria-hidden="true"></div>
 
-<!-- HEADER -->
+<!-- HEADER — the session's name lives here and is edited in place. -->
 <header class="border-b border-line shrink-0">
   <div class="px-4 sm:px-6 py-3 flex items-center gap-3">
     <a href="/" class="flex items-center gap-1 text-sm text-muted hover:text-ink shrink-0" title="Back to home">
       <span aria-hidden="true">←</span><span class="hidden sm:inline">Home</span>
     </a>
     <span class="w-px h-5 bg-line shrink-0" aria-hidden="true"></span>
-    <a href="/" class="flex items-center gap-2.5">
+    <a href="/" class="flex items-center gap-2.5 shrink-0">
       <span class="w-7 h-7 rounded-lg bg-coral flex items-center justify-center text-white font-bold display text-sm">M</span>
       <span class="font-bold tracking-tight text-[15px] hidden sm:inline">MomentSearch</span>
     </a>
 
-    <!-- pane switcher (phones/tablets; the three columns show side by side on xl) -->
-    <div class="flex gap-1 ml-2 xl:hidden">
-      <button class="paneTab tab" data-pane="sessions">Sessions</button>
-      <button class="paneTab tab active" data-pane="chat">Playground</button>
-      <button class="paneTab tab" data-pane="videos">Videos</button>
+    <!-- The session's name, editable anywhere it appears (.sessName inputs all
+         save through one path). On the setup page it's a proper labelled box;
+         here it's a compact echo of the same field. -->
+    <div class="flex items-center gap-1.5 min-w-0 ml-1 flex-1 sm:flex-none">
+      <span class="text-muted shrink-0" aria-hidden="true">/</span>
+      <!-- Sized to its content (JS keeps `size` in step with the name) so the
+           `demo` chip sits against the title instead of stranded beside a
+           fixed-width box. -->
+      <input aria-label="Session name" size="16"
+             class="sessName titleInput display text-[15px] font-600 bg-transparent rounded-lg px-1.5 py-1 min-w-0 max-w-[14rem] outline-none"
+             maxlength="120" spellcheck="false">
+      <span id="demoTag" class="hidden text-[9px] px-1 rounded bg-coral/15 text-coral2 shrink-0">demo</span>
+      <span id="titleSaved" class="text-[10px] text-muted opacity-0 transition-opacity shrink-0">saved</span>
     </div>
 
+    <!-- Sessions, reachable from EVERY page. It used to live only in the Ask
+         page's rail, which meant landing on "Add videos" left you with no way
+         back to work you'd already indexed. -->
+    <details id="sessMenu" class="relative shrink-0">
+      <summary class="list-none cursor-pointer text-xs text-muted hover:text-ink border border-line rounded-full px-2.5 py-1 whitespace-nowrap inline-flex items-center gap-1">
+        <span id="sessMenuLabel">Sessions</span><span class="chev text-[9px]" aria-hidden="true">▾</span>
+      </summary>
+      <div class="absolute left-0 top-full mt-1.5 z-40 w-72 bg-card border border-line rounded-xl shadow-lg p-1.5">
+        <div id="sessionListMenu" class="max-h-64 overflow-y-auto space-y-0.5"></div>
+        <div class="border-t border-line mt-1.5 pt-1.5 flex gap-1.5">
+          <button class="newSessionBtn flex-1 bg-ink hover:bg-black text-white text-[12px] font-semibold rounded-lg px-3 py-2 transition">+ New session</button>
+          <button class="deleteSessionBtn w-9 rounded-lg border border-line text-muted hover:border-coral hover:text-coral2 transition text-xs" title="Delete the session you're in">🗑</button>
+        </div>
+      </div>
+    </details>
+
     <span id="llmBadge" class="ml-auto text-xs px-3 py-1 rounded-full border border-line text-muted hidden sm:inline">checking…</span>
+    <!-- Single-user: this names the account, it doesn't offer to change it.
+         No sign-out, because there is nothing to sign out of. -->
     <span id="avatar" class="w-7 h-7 rounded-full bg-coral/15 border border-coral/35 text-coral2 text-xs font-bold flex items-center justify-center shrink-0"></span>
-    <span id="whoEmail" class="text-xs text-muted hidden md:inline"></span>
-    <button id="signOutBtn" class="text-xs text-muted hover:text-coral2 underline decoration-line">Sign out</button>
+    <span id="whoName" class="text-xs text-muted hidden md:inline"></span>
   </div>
 </header>
 
-<div class="flex-1 flex min-h-0">
+<!-- NAV — three places, not a one-way wizard. It reads as a numbered stepper
+     until the session has something indexed, and as plain navigation after that
+     (the labels swap in renderNav). Nothing auto-advances except 2 → 3 the
+     moment the first video is searchable: that's the payoff, and waiting for a
+     click there would just be ceremony. -->
+<nav id="nav" class="shrink-0 border-b border-line bg-paper/80 backdrop-blur-sm">
+  <ol class="mx-auto px-5 py-2.5 flex items-center justify-center gap-2 sm:gap-3.5">
+    <li><button class="stepBtn flex items-center gap-2 text-left" data-step="1">
+      <span class="dot">1</span>
+      <span class="min-w-0 hidden sm:block">
+        <span class="lab block text-[12.5px] font-600 leading-tight">Add videos</span>
+        <span class="sub block text-[10px] text-muted leading-tight">links or files</span>
+      </span>
+    </button></li>
+    <li class="w-6 sm:w-12 h-px bg-line shrink-0" aria-hidden="true"></li>
+    <li><button class="stepBtn flex items-center gap-2 text-left" data-step="2">
+      <span class="dot">2</span>
+      <span class="min-w-0 hidden sm:block">
+        <span class="lab block text-[12.5px] font-600 leading-tight">Processing</span>
+        <span id="navSub2" class="sub block text-[10px] text-muted leading-tight">queue and progress</span>
+      </span>
+    </button></li>
+    <li class="w-6 sm:w-12 h-px bg-line shrink-0" aria-hidden="true"></li>
+    <li><button class="stepBtn flex items-center gap-2 text-left" data-step="3">
+      <span class="dot">3</span>
+      <span class="min-w-0 hidden sm:block">
+        <span class="lab block text-[12.5px] font-600 leading-tight">Ask</span>
+        <span class="sub block text-[10px] text-muted leading-tight">the exact moment</span>
+      </span>
+    </button></li>
+  </ol>
+</nav>
 
-  <!-- ── SESSIONS ─────────────────────────────────────────────────────────── -->
-  <aside id="paneSessions" class="pane w-full xl:w-64 xl:shrink-0 border-r border-line flex flex-col min-h-0 bg-paper">
-    <div class="p-3 shrink-0">
-      <button id="newSession" class="w-full bg-ink hover:bg-black text-white text-sm font-semibold rounded-xl px-4 py-2.5 transition">
-        + New session
-      </button>
-    </div>
-    <div id="sessionList" class="flex-1 overflow-y-auto px-3 pb-3 space-y-1"></div>
-    <div class="p-3 border-t border-line shrink-0 text-[11px] text-muted leading-relaxed">
-      A session holds its own videos and its own chat. New sessions start empty.
-    </div>
-  </aside>
+<main class="flex-1 min-h-0 overflow-hidden">
 
-  <!-- ── PLAYGROUND (chat) ────────────────────────────────────────────────── -->
-  <section id="paneChat" class="pane flex-1 flex flex-col min-h-0 min-w-0">
-    <div class="px-5 py-3 border-b border-line flex items-center gap-3 shrink-0">
-      <div class="min-w-0">
-        <h1 id="sessTitle" class="display text-lg font-600 truncate">…</h1>
-        <div id="sessMeta" class="text-[11px] text-muted"></div>
-      </div>
-      <div class="ml-auto flex gap-1 shrink-0">
-        <button id="renameSession" class="w-8 h-8 rounded-lg border border-line text-muted hover:border-coral hover:text-coral2 transition" title="Rename session">✎</button>
-        <button id="deleteSession" class="w-8 h-8 rounded-lg border border-line text-muted hover:border-coral hover:text-coral2 transition" title="Delete session">🗑</button>
-      </div>
-    </div>
-
-    <div id="chat" class="flex-1 overflow-y-auto px-5 py-6 space-y-6"></div>
-
-    <div class="border-t border-line p-4 shrink-0">
-      <div class="flex items-end gap-2 bg-white border border-line rounded-2xl shadow-sm px-3 py-2.5 focus-within:border-coral focus-within:ring-4 focus-within:ring-coral/15 transition max-w-3xl mx-auto">
-        <div class="relative flex-1">
-          <textarea id="q" rows="1" aria-label="Ask about the videos in this session"
-            class="relative z-10 w-full bg-transparent outline-none resize-none text-[15px] leading-relaxed px-2 py-2"></textarea>
-          <div id="ghost" class="ghost px-2 py-2 text-[15px] leading-relaxed">Ask about the videos in this session…</div>
-        </div>
-        <button id="go" aria-label="Send"
-          class="shrink-0 w-9 h-9 rounded-xl bg-coral hover:bg-coral2 text-white flex items-center justify-center transition">→</button>
-      </div>
-      <p class="text-[10.5px] text-muted text-center mt-2">
-        Each question is searched on its own — history is shown, not sent to the model.
+  <!-- ── PAGE 1 · SET UP ───────────────────────────────────────────────────────
+       Name the session, then add as many videos as you like. Each one starts
+       processing the moment its bytes land — you do NOT wait here, and adding a
+       second file never navigates away mid-upload (that bug is exactly what made
+       multi-file uploads look broken). You leave when you press Next. -->
+  <section id="step1" class="stepPanel h-full overflow-y-auto">
+   <div class="max-w-3xl mx-auto px-5 py-10">
+    <div class="text-center">
+      <h1 class="rise display text-3xl font-bold tracking-tight" style="--d:0">Set up this session</h1>
+      <p class="rise text-[15px] text-muted mt-2.5 leading-relaxed max-w-lg mx-auto" style="--d:1">
+        Give it a name, then add the videos it should search — by what's
+        <b class="text-ink">on screen</b> and by what's <b class="text-ink">said</b>.
       </p>
     </div>
+
+    <!-- 1. the name, in a box, editable -->
+    <div class="rise mt-8" style="--d:2">
+      <label for="nameBox" class="block text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Session name</label>
+      <input id="nameBox" aria-label="Session name" maxlength="120" spellcheck="false"
+        class="sessName w-full bg-white border border-line rounded-xl px-4 py-3 display text-[16px] font-600 outline-none focus:border-coral focus:ring-4 focus:ring-coral/15 transition">
+      <p class="text-[11.5px] text-muted mt-1.5">Rename it any time — it's just a label for this folder of videos.</p>
+    </div>
+
+    <!-- 2. YouTube first: the zero-friction path (nothing to upload). -->
+    <div class="rise mt-7" style="--d:3">
+      <label for="ytUrl" class="block text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Add a YouTube link</label>
+      <div class="flex gap-2">
+        <input id="ytUrl" type="text" placeholder="https://youtu.be/…  (paste several, one at a time)" autocomplete="off"
+          class="flex-1 min-w-0 bg-white border border-line rounded-xl px-4 py-3 text-[14px] outline-none focus:border-coral focus:ring-4 focus:ring-coral/15 transition">
+        <button id="ytBtn" class="bg-ink hover:bg-black text-white text-[14px] font-semibold rounded-xl px-6 transition shrink-0">Add</button>
+      </div>
+    </div>
+
+    <div class="rise flex items-center gap-3 my-5" style="--d:4">
+      <span class="h-px bg-line flex-1"></span>
+      <span class="text-[11px] uppercase tracking-wider text-muted font-semibold">and / or</span>
+      <span class="h-px bg-line flex-1"></span>
+    </div>
+
+    <label id="drop" class="rise block border-2 border-dashed border-line rounded-2xl px-6 py-9 text-center cursor-pointer hover:border-coral hover:bg-coral/[0.03] transition" style="--d:5">
+      <input id="upFile" type="file" accept="video/*" class="hidden" multiple>
+      <span class="block text-[15px]"><b class="text-ink">Drop videos here</b> <span class="text-muted">or click to choose — several at once is fine</span></span>
+      <span class="block text-[11.5px] text-muted mt-1" id="upLimit"></span>
+    </label>
+    <div id="upList" class="mt-3 space-y-2"></div>
+    <div id="ingestStatus" class="text-[12.5px] text-muted mt-3 min-h-[18px]"></div>
+
+    <!-- 3. what's in the session so far, live -->
+    <div id="step1Videos" class="mt-7"></div>
+
+    <!-- 4. leave when YOU say so -->
+    <div id="step1Foot" class="mt-8"></div>
+
+    <!-- Work you already have. Landing here with no way back to an indexed
+         session was the reason this page felt like a dead end. -->
+    <div id="step1Existing" class="mt-8 pt-6 border-t border-line"></div>
+
+    <div id="sampleHatch" class="rise mt-8 pt-6 border-t border-line text-center" style="--d:6">
+      <p class="text-[13.5px] text-muted">
+        No video handy?
+        <button id="goSamples" class="text-coral2 font-semibold hover:text-coral underline decoration-line">
+          Search a pre-indexed talk instead →
+        </button>
+      </p>
+    </div>
+   </div>
   </section>
 
-  <!-- ── VIDEOS IN THIS SESSION ───────────────────────────────────────────── -->
-  <aside id="paneVideos" class="pane w-full xl:w-80 xl:shrink-0 border-l border-line flex flex-col min-h-0 bg-paper">
-    <div class="px-4 py-3 border-b border-line shrink-0">
-      <h2 class="display text-base font-600">Videos in this session</h2>
-      <p id="vidNote" class="text-[11px] text-muted mt-0.5"></p>
+  <!-- ── PAGE 2 · PROCESSING ──────────────────────────────────────────────────
+       The queue, drawn. Auto-advances to Ask the moment the first video is
+       searchable — you don't have to sit here. -->
+  <section id="step2" class="stepPanel h-full overflow-y-auto">
+   <div class="max-w-3xl mx-auto px-5 py-10">
+    <div class="text-center">
+      <h1 class="display text-3xl font-bold tracking-tight">Processing</h1>
+      <p id="step2Sub" class="text-[15px] text-muted mt-2.5 leading-relaxed max-w-lg mx-auto"></p>
     </div>
+    <div id="pipeline" class="mt-8 space-y-4"></div>
+    <div id="step2Foot" class="mt-8 text-center space-x-4"></div>
+   </div>
+  </section>
 
-    <div class="p-4 space-y-3 shrink-0 border-b border-line">
-      <!-- YouTube -->
-      <div class="flex gap-2">
-        <input id="ytUrl" type="text" placeholder="Paste a YouTube URL"
-          class="flex-1 min-w-0 bg-white border border-line rounded-xl px-3 py-2 text-[13px] outline-none focus:border-coral">
-        <button id="ytBtn" class="bg-ink hover:bg-black text-white text-[13px] font-semibold rounded-xl px-3 transition">Add</button>
+  <!-- ── PAGE 3 · ASK ─────────────────────────────────────────────────────────
+       Independent of the setup flow: sessions on the left, the search in the
+       middle, this session's videos on the right — including the ones still
+       processing, so you can ask what's ready while the rest catches up.
+       One question at a time: asking REPLACES the answer on screen. -->
+  <section id="step3" class="stepPanel h-full min-h-0">
+    <div class="h-full flex min-h-0">
+
+      <!-- sessions -->
+      <aside class="hidden lg:flex w-60 shrink-0 border-r border-line flex-col min-h-0 bg-paper">
+        <div class="px-3 py-2.5 flex items-center gap-2 shrink-0">
+          <span class="text-[11px] uppercase tracking-wider text-muted font-semibold">Sessions</span>
+          <button class="newSessionBtn ml-auto text-[11px] font-semibold text-coral2 hover:text-coral">+ New</button>
+        </div>
+        <div id="sessionList" class="flex-1 overflow-y-auto px-2 pb-3 space-y-1"></div>
+        <div class="p-2.5 border-t border-line shrink-0">
+          <button class="deleteSessionBtn w-full text-[11.5px] text-muted hover:text-coral2 text-left">Delete this session</button>
+        </div>
+      </aside>
+
+      <!-- the search. #askTop centres itself vertically until there's an answer
+           to read, then yields the room (body[data-ans] in app.css) — an empty
+           column with everything jammed under the header just reads as broken. -->
+      <div class="flex-1 flex flex-col min-h-0 min-w-0">
+        <div id="askTop" class="px-5 pt-6 pb-4">
+          <div id="askHead" class="text-center mb-5">
+            <h1 class="display text-2xl sm:text-3xl font-bold tracking-tight">Ask these videos anything</h1>
+            <p class="text-[14px] text-muted mt-2 leading-relaxed max-w-lg mx-auto">
+              Matched on what's shown <b class="text-ink">and</b> what's said. Click any
+              citation and the video plays from that exact second.
+            </p>
+          </div>
+
+          <div class="max-w-2xl mx-auto">
+            <div class="flex items-end gap-2 bg-white border border-line rounded-2xl shadow-sm px-3 py-2.5 focus-within:border-coral focus-within:ring-4 focus-within:ring-coral/15 transition">
+              <div class="relative flex-1">
+                <textarea id="q" rows="1" aria-label="Ask about the videos in this session"
+                  class="relative z-10 w-full bg-transparent outline-none resize-none text-[15px] leading-relaxed px-2 py-2"></textarea>
+                <div id="ghost" class="ghost px-2 py-2 text-[15px] leading-relaxed">Ask about these videos…</div>
+              </div>
+              <button id="go" aria-label="Ask"
+                class="shrink-0 w-9 h-9 rounded-xl bg-coral hover:bg-coral2 text-white flex items-center justify-center transition">→</button>
+            </div>
+            <div id="scopeNote" class="text-[11.5px] text-muted mt-2 text-center"></div>
+            <div id="starters" class="flex flex-wrap gap-2 justify-center mt-4"></div>
+
+            <!-- Phones have no videos rail, so the same list (and the same
+                 scope checkboxes) lives here instead — otherwise the scope note
+                 would name a set you can neither see nor change. -->
+            <details id="vidMenu" class="md:hidden mt-4">
+              <summary class="list-none cursor-pointer text-xs text-muted hover:text-ink border border-line rounded-full px-2.5 py-1 inline-flex items-center gap-1">
+                <span id="vidMenuLabel">Videos</span> <span class="chev text-[9px]" aria-hidden="true">▾</span>
+              </summary>
+              <div id="askVideosSmall" class="mt-2 space-y-3"></div>
+            </details>
+          </div>
+        </div>
+
+        <div id="answer" class="overflow-y-auto px-5 pb-8"></div>
       </div>
-      <!-- Upload: click or drop -->
-      <label id="drop" class="block border border-dashed border-line rounded-xl px-4 py-5 text-center cursor-pointer hover:border-coral transition">
-        <input id="upFile" type="file" accept="video/*" class="hidden" multiple>
-        <span class="text-[13px] text-muted">
-          <b class="text-ink">Drop a video</b> or click to choose<br>
-          <span class="text-[11px]" id="upLimit"></span>
-        </span>
-      </label>
-      <div id="upList" class="space-y-2"></div>
-      <div id="ingestStatus" class="text-[12px] text-muted min-h-[16px]"></div>
-    </div>
 
-    <div id="sessVideos" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
-  </aside>
-</div>
+      <!-- this session's videos: ready AND still processing -->
+      <aside class="hidden md:flex w-72 xl:w-80 shrink-0 border-l border-line flex-col min-h-0 bg-paper">
+        <div class="px-4 py-2.5 flex items-center gap-2 border-b border-line shrink-0">
+          <span class="text-[11px] uppercase tracking-wider text-muted font-semibold">Videos</span>
+          <button id="addMore" class="ml-auto text-[11px] font-semibold text-coral2 hover:text-coral">+ Add</button>
+        </div>
+        <div id="askVideos" class="flex-1 overflow-y-auto p-3 space-y-3"></div>
+      </aside>
+    </div>
+  </section>
+</main>
 
 <!-- PLAYER MODAL -->
 <div id="modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">

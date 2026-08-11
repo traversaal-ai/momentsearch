@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MomentSearch quickstart — a tiny, end-to-end starter.
 
-Ingests four LLM talks/explainers (slides, diagrams, animations) and then asks
+Ingests one LLM talk/explainer (slides, diagrams, animations) and then asks
 *visual* questions against them — e.g. "a diagram of the attention mechanism".
 MomentSearch matches your question against what is **seen** on screen, so the
 answer points you at the exact frame/timestamp.
@@ -20,7 +20,7 @@ Prerequisites
 
 Usage
 -----
-    python examples/quickstart.py                     # ingest the 4 videos, run sample queries
+    python examples/quickstart.py                     # ingest the video, run sample queries
     python examples/quickstart.py --skip-ingest       # just run the sample queries
     python examples/quickstart.py --ask "a tokenizer splitting text into tokens"
 
@@ -50,7 +50,7 @@ from src.samples import SAMPLE_VIDEOS, sample_video_id  # noqa: E402
 
 USER = DEFAULT_USER_ID
 
-# The same four talks the worker auto-seeds on boot (src/samples.py).
+# The same talk the worker auto-seeds on boot (src/samples.py).
 VIDEOS = [{"url": v["url"], "label": v["title"]} for v in SAMPLE_VIDEOS]
 
 SAMPLE_QUERIES = [

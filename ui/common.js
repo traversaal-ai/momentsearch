@@ -8,41 +8,27 @@ const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* ---------- identity ----------
-   Sign-in trades an email for a workspace id + an HMAC-signed token
-   (src/api/auth.py). Both travel on every call; the server derives the tenant
-   from the SIGNATURE, so the id in the header can't be swapped for another. */
-const STORE="ms_session";
-let SESSION=null;
-try{ SESSION=JSON.parse(localStorage.getItem(STORE)||"null"); }catch{ SESSION=null; }
-const SIGNED = ()=> !!(SESSION && SESSION.token);
-function saveSession(s){
-  SESSION=s;
-  if(s) localStorage.setItem(STORE, JSON.stringify(s)); else localStorage.removeItem(STORE);
-}
-function signOut(){ saveSession(null); location.href="/"; }
+   There is one account and you are always it. No sign-in, no sign-up, no token,
+   nothing in localStorage: the server pins every request to its single tenant
+   (config.SINGLE_USER_ID) and ignores any identity header a client sends, so
+   there is nothing for the browser to prove or remember.
 
-/* ---------- top-nav auth affordance ----------
-   Every page's header carries one #navAuth link so the top-right is consistent
-   across the whole flow: signed out it points to /signin ("Sign in"); signed in
-   it points to the workspace ("Workspace →") and names the account. Call once
-   after the DOM's header exists. */
+   USER_NAME is a label for the header, not a credential. If real auth ever
+   comes back, this is the one block that has to learn about sessions again. */
+const USER_NAME="admin";
+
+/* ---------- top-nav affordance ----------
+   Every page's header carries one #navAuth link, so the top-right is the same
+   everywhere: it goes to the workspace. Call once after the header exists. */
 function wireNav(){
   const a=$("#navAuth"); if(!a) return;
-  if(SIGNED()){
-    a.href="/app"; a.textContent="Workspace →";
-    a.title="Signed in as "+(SESSION.email||"");
-  }else{
-    a.href="/signin"; a.textContent="Sign in"; a.title="";
-  }
+  a.href="/app"; a.textContent="Workspace →"; a.title="Open the workspace";
 }
 
-/* Never call fetch() on our own API directly — this is what carries the session. */
+/* Use this rather than fetch() for our own API: one place to add a header if
+   this ever needs to carry credentials again. */
 function api(path, opts={}){
   const headers=Object.assign({}, opts.headers||{});
-  if(SIGNED()){
-    headers["X-User-Id"]=SESSION.user_id;
-    headers["Authorization"]="Bearer "+SESSION.token;
-  }
   return fetch(path, Object.assign({}, opts, {headers}));
 }
 async function apiJSON(path, opts){

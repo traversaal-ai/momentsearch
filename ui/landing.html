@@ -4,6 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>MomentSearch — search inside video by what's on screen</title>
+<link rel="icon" href="/ui/assets/traversaal-mark.png">
+<link rel="apple-touch-icon" href="/ui/assets/traversaal-mark.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -25,9 +27,18 @@
   <div class="max-w-5xl mx-auto px-6 py-4 flex items-center gap-3">
     <span class="w-8 h-8 rounded-lg bg-coral flex items-center justify-center text-white font-bold display">M</span>
     <span class="font-bold tracking-tight">MomentSearch</span>
+
+    <!-- Whose project this is. The mark's coral is the same coral as the palette. -->
+    <a href="https://traversaal.ai" target="_blank" rel="noopener"
+       class="flex items-center gap-2 group pl-3 ml-1 border-l border-line" title="Built by Traversaal.ai">
+      <span class="hidden sm:inline text-xs text-muted">built by</span>
+      <img src="/ui/assets/traversaal-logo-light.png" alt="Traversaal.ai"
+           class="h-5 w-auto opacity-85 group-hover:opacity-100 transition">
+    </a>
+
     <a href="https://github.com/traversaal-ai/momentsearch"
        class="ml-auto text-xs text-muted hover:text-ink">GitHub ↗</a>
-    <a id="navAuth" href="/signin" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-ink text-white hover:bg-black transition">Sign in</a>
+    <a id="navAuth" href="/app" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-ink text-white hover:bg-black transition">Workspace →</a>
   </div>
 </header>
 
@@ -35,7 +46,7 @@
 
   <div class="text-center">
     <div class="rise inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-7" style="--d:0">
-      ● Open source · CLIP + Qdrant + bring-your-own-LLM
+      ● Open source · Apache 2.0
     </div>
     <h1 id="heroTitle" class="display text-5xl sm:text-6xl font-bold leading-[1.08] tracking-tight"></h1>
     <p class="rise mt-6 text-[18px] text-muted leading-relaxed mx-auto max-w-xl" style="--d:6">
@@ -43,17 +54,19 @@
       <b class="text-ink font-600">shown on screen</b>, not just what's said.
     </p>
 
-    <!-- the two doors -->
+    <!-- One door in, and a side entrance for the read-only samples. There is no
+         sign-in step, so the primary button goes straight to the workspace. -->
     <div class="rise mt-9 flex flex-wrap gap-3 justify-center" style="--d:8">
-      <a href="/demo" class="bg-coral hover:bg-coral2 text-white font-semibold rounded-xl px-7 py-3.5 transition shadow-sm">
-        Try the demo →
+      <a href="/app" class="bg-coral hover:bg-coral2 text-white font-semibold rounded-xl px-7 py-3.5 transition shadow-sm">
+        Open the workspace →
       </a>
-      <a id="signInLink" href="/signin" class="bg-card border border-line hover:border-coral text-ink font-semibold rounded-xl px-7 py-3.5 transition">
-        Sign in
+      <a href="/demo" class="bg-card border border-line hover:border-coral text-ink font-semibold rounded-xl px-7 py-3.5 transition">
+        Search the samples
       </a>
     </div>
-    <p id="doorNote" class="rise mt-4 text-xs text-muted" style="--d:10">
-      The demo searches four pre-indexed talks — no sign-up. Sign in to add your own videos.
+    <p class="rise mt-4 text-xs text-muted" style="--d:10">
+      No sign-up, no sign-in — the workspace opens straight away. A pre-indexed
+      talk is already in it; add your own YouTube links or uploads any time.
     </p>
   </div>
 
@@ -84,32 +97,37 @@
 </main>
 
 <footer class="border-t border-line">
-  <div class="max-w-5xl mx-auto px-6 py-6 text-xs text-muted flex justify-between flex-wrap gap-2">
-    <span>Apache 2.0 · frames + transcript, fused by rank</span>
-    <span><a class="hover:text-ink" href="https://momentsearch.vercel.app/">momentsearch.vercel.app</a></span>
+  <div class="max-w-5xl mx-auto px-6 py-6 text-xs text-muted flex justify-between items-center flex-wrap gap-3">
+    <span>
+      <a class="hover:text-ink font-semibold text-ink" target="_blank" rel="noopener"
+         href="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</a>
+      licensed
+    </span>
+    <span class="flex items-center gap-2">
+      © 2026
+      <a href="https://traversaal.ai" target="_blank" rel="noopener" class="flex items-center">
+        <img src="/ui/assets/traversaal-logo-light.png" alt="Traversaal.ai" class="h-4 w-auto opacity-70 hover:opacity-100 transition">
+      </a>
+    </span>
   </div>
 </footer>
 
 <script src="/ui/common.js"></script>
 <script>
-  /* Headline word-by-word, with the coral word underlining itself. */
+  /* Headline word-by-word. The coral word then writes itself in — a nib sweeps
+     left to right uncovering the letters — and signs it off with the underline.
+     .ink is the part that gets uncovered; .nib is the pen tip riding the edge. */
   const UNDERLINE = `<svg viewBox="0 0 320 14" preserveAspectRatio="none"><path d="M4 9C70 3 154 2 316 6"/></svg>`;
   const PARTS=[{text:"Find the exact"},{text:"moment",coral:true},{text:"in any video."}];
   let i=0;
   $("#heroTitle").innerHTML = PARTS.map(p=>p.text.split(" ").map(w=>{
-    const inner = p.coral ? `<span class="mark text-coral">${esc(w)}${UNDERLINE}</span>` : esc(w);
+    const inner = p.coral
+      ? `<span class="mark text-coral"><span class="ink">${esc(w)}</span><i class="nib" aria-hidden="true"></i>${UNDERLINE}</span>`
+      : esc(w);
     return `<span class="word" style="--i:${i++}">${inner}</span>`;
   }).join(" ")).join(" ");
 
-  wireNav();   // header top-right: "Sign in" or, when signed in, "Workspace →"
-
-  /* Already signed in? Then this door says so. */
-  if(SIGNED()){
-    const a=$("#signInLink");
-    a.href="/app"; a.textContent="Open your workspace →";
-    a.className="bg-ink hover:bg-black text-white font-semibold rounded-xl px-7 py-3.5 transition";
-    $("#doorNote").innerHTML=`Signed in as <b class="text-ink">${esc(SESSION.email)}</b>.`;
-  }
+  wireNav();   // header top-right → the workspace
 </script>
 </body>
 </html>

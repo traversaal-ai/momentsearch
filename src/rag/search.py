@@ -140,10 +140,18 @@ def _rerank(question: str, windows: list[dict]) -> list[dict]:
     return windows
 
 
+def _noop_stage(stage: str, detail: str = "") -> None:
+    """Default progress sink. Callers that want to show what the pipeline is
+    doing (the UI's streaming ask) pass their own on_stage; everyone else pays
+    nothing. Stages are emitted at REAL boundaries — never on a timer — so the
+    label on screen is always what the server is actually busy with."""
+
+
 def retrieve(question: str, user_id: str, *, top_k: int | None = None,
              video_id: str | None = None,
              video_ids: list[str] | None = None,
-             include_samples: bool = True) -> dict[str, Any]:
+             include_samples: bool = True,
+             on_stage=_noop_stage) -> dict[str, Any]:
     """Multimodal retrieve: query BOTH branches (CLIP frames + transcript text),
     fuse by RRF into time windows, and return numbered moment-citations.
 
@@ -154,7 +162,10 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
     k = top_k or TOP_K
 
     # Visual branch — CLIP text→image.
-    vhits = vector_store.search(embed_text(question), user_id, top_k=BRANCH_TOP_K,
+    on_stage("embedding")
+    qvec = embed_text(question)
+    on_stage("searching")
+    vhits = vector_store.search(qvec, user_id, top_k=BRANCH_TOP_K,
                                 video_id=video_id, video_ids=video_ids,
                                 include_samples=include_samples)
     best_visual = vhits[0]["score"] if vhits else 0.0
@@ -169,7 +180,9 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
                                          include_samples=include_samples)
         best_text = thits[0]["score"] if thits else 0.0
 
-    windows = _rerank(question, _fuse(vhits, thits))[:k]
+    fused = _fuse(vhits, thits)
+    on_stage("ranking", f"{len(fused)} candidate moments")
+    windows = _rerank(question, fused)[:k]
     videos = db.videos_by_ids(sorted({w["video_id"] for w in windows}))
 
     # A text-only moment has no matched frame; borrow the video's picture nearest
@@ -280,8 +293,10 @@ def resolve_llm(user_id: str) -> tuple[llm.LLMConfig | None, str]:
 
 def ask(question: str, user_id: str, *, top_k: int | None = None,
         video_id: str | None = None,
-        video_ids: list[str] | None = None) -> dict[str, Any]:
-    r = retrieve(question, user_id, top_k=top_k, video_id=video_id, video_ids=video_ids)
+        video_ids: list[str] | None = None,
+        on_stage=_noop_stage) -> dict[str, Any]:
+    r = retrieve(question, user_id, top_k=top_k, video_id=video_id,
+                 video_ids=video_ids, on_stage=on_stage)
     citations = r["citations"]
     result: dict[str, Any] = {"question": question, "citations": citations}
 
@@ -307,7 +322,12 @@ def ask(question: str, user_id: str, *, top_k: int | None = None,
                             "on the server, for a synthesized, grounded answer."))
         return result
 
+    # Pulling the matched frames out of object storage is its own wait (one GCS
+    # GET per moment), so it gets its own stage rather than hiding inside "answering".
+    on_stage("reading", f"{len(citations)} moment{'' if len(citations) == 1 else 's'}")
     moments = _build_moments(user_id, citations)
+    frames = sum(1 for m in moments if m.get("image"))
+    on_stage("answering", f"{cfg.model} reading {frames} frame{'' if frames == 1 else 's'}")
     result["answer"] = _validate_citations(llm.answer(question, moments, cfg),
                                            len(citations))
     result["llm_used"] = True

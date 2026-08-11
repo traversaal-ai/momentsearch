@@ -16,13 +16,13 @@ primary_region = 'iad'
 [build]
 
 [deploy]
-  # Startup gate: index the four sample talks BEFORE the new version goes live —
+  # Startup gate: index the sample talk BEFORE the new version goes live —
   # if it can't, the deploy aborts and the old version keeps serving, so users
   # never hit a half-indexed app. Runs in a temporary machine where the clip
   # service isn't up yet, so CLIP_SERVICE_URL= forces in-process embedding.
   # Idempotent + durable (Qdrant Cloud): real work happens only on first deploy.
   release_command = "sh -c 'CLIP_SERVICE_URL= python -m src.seed'"
-  # Headroom for a genuine first-deploy index (4 talks embedded in-process). A
+  # Headroom for a genuine first-deploy index (1 talk embedded in-process). A
   # stuck-but-complete sample is adopted, not re-ingested (src/seeding.py), so
   # this only bites on a truly-fresh Qdrant.
   release_command_timeout = "12m"

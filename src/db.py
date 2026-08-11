@@ -75,10 +75,11 @@ CREATE TABLE IF NOT EXISTS ms_user_llms (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Demo sign-in: an email IS the account, and it maps to exactly one workspace
--- id forever. That id is the `user_id` every video row, bucket key and Qdrant
--- point is already tagged with, so signing in doesn't introduce a new tenancy
--- concept — it just stops everyone sharing the "default" tenant.
+-- LEGACY, UNUSED. This mapped a sign-in email to a workspace id back when the
+-- app was multi-tenant. The app is single-user now (config.SINGLE_USER_ID), so
+-- no code path reads or writes this table. The DDL stays only so a database
+-- created before the change and one created after look the same; drop it by hand
+-- if you want it gone. Restoring multi-user auth would use it again.
 CREATE TABLE IF NOT EXISTS ms_users (
     email      TEXT PRIMARY KEY,
     user_id    TEXT NOT NULL UNIQUE,   -- u_<uuid4 hex>, matches ^[A-Za-z0-9_-]{1,64}$
@@ -258,27 +259,10 @@ def list_videos(user_id: str, status: str | None = None,
         return conn.execute(q, tuple(params)).fetchall()
 
 
-# ── Demo sign-in (email -> workspace) ────────────────────────────────────────
-
-def get_or_create_user(email: str, user_id: str) -> dict:
-    """Resolve an email to its workspace, minting `user_id` only if this email
-    has never been seen. The INSERT ... ON CONFLICT makes concurrent first
-    sign-ins safe: the loser's generated id is discarded, not stored."""
-    with pool().connection() as conn:
-        return conn.execute(
-            """
-            INSERT INTO ms_users (email, user_id) VALUES (%s, %s)
-            ON CONFLICT (email) DO UPDATE SET last_seen = now()
-            RETURNING *
-            """,
-            (email, user_id),
-        ).fetchone()
-
-
-def get_user_by_workspace(user_id: str) -> dict | None:
-    with pool().connection() as conn:
-        return conn.execute("SELECT * FROM ms_users WHERE user_id = %s",
-                            (user_id,)).fetchone()
+# ms_users had one job — mapping a sign-in email to a workspace id — and the app
+# is single-user now, so nothing reads or writes it. The table's DDL stays in
+# init_schema() so an existing database isn't a special case, but it holds no
+# rows this code will ever consult; see src/api/auth.py.
 
 
 # ── Sessions (a folder of videos + the chat about them) ───────────────────────

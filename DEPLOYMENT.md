@@ -139,7 +139,7 @@ fly deploy --ha=false
 On deploy, fly.toml's `release_command` runs the **seed step** first
 (`python -m src.seed`). Because the samples are already indexed in your shared
 Qdrant/Neon, it exits in seconds and the app goes live. On a **fresh clone**
-(empty Qdrant) it instead re-indexes the four sample talks in-process; if that
+(empty Qdrant) it instead re-indexes the sample talk in-process; if that
 can't finish (e.g. no YouTube cookies) it's **best-effort by default** — it logs
 loudly and the deploy still proceeds with an empty `/demo`, rather than aborting.
 Set `SEED_STRICT=true` to restore the hard gate (an incomplete seed aborts the

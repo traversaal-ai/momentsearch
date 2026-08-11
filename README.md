@@ -109,7 +109,7 @@ only build/config files.
 | Raw videos + thumbnails | S3 / GCS / Tigris (or local disk in dev) | rent it |
 | Postgres — manifest + status | [Neon](https://neon.tech) | rent it |
 | Work queue + run dashboard | [Prefect Cloud](https://app.prefect.cloud) (free tier) | rent it |
-| Vector index | [Qdrant Cloud](https://cloud.qdrant.io) (or the compose container) | rent it |
+| Vector index | [Qdrant Cloud](https://cloud.qdrant.io) (or a local Qdrant — see "Run storage and Qdrant locally") | rent it / self-host |
 | Vision LLM | OpenAI / NVIDIA / Anthropic / any OpenAI-compatible — env-switched | rent it |
 
 ## Quickstart (Docker)
@@ -117,9 +117,10 @@ only build/config files.
 ```bash
 git clone https://github.com/traversaal-ai/momentsearch.git
 cd momentsearch
-cp .env.example .env    # fill in: DATABASE_URL, PREFECT_API_URL/KEY
-                        # (storage=local + compose Qdrant work out of the box;
-                        #  LLM key optional — search works without it;
+cp .env.example .env    # fill in the cloud creds: DATABASE_URL, QDRANT_URL/KEY,
+                        # PREFECT_API_URL/KEY, OPENAI_API_KEY
+                        # (STORAGE_PROVIDER=local works out of the box — no bucket;
+                        #  Qdrant can run local too — see "Run storage and Qdrant locally";
                         #  ADMIN_TOKEN optional — set it on public deploys)
 docker compose up --build
 # API + UI:       http://localhost:8000
@@ -130,13 +131,13 @@ Two pages, one app:
 
 | Page | What it is |
 |---|---|
-| **`/`** | **Sample project — "A Deep Dive into LLMs."** Four LLM talks, pre-indexed, read-only. |
+| **`/`** | **Sample project — "A Deep Dive into LLMs."** One LLM talk, pre-indexed, read-only. |
 | **`/get-started`** | **Bring your own videos.** Add a YouTube URL or upload a file, then ask. |
 
 **The sample corpus is a startup step.** A one-shot `seed` service indexes the
-four talks before `api`/`worker` start — so when `http://localhost:8000` first
-answers, the samples are already queryable. First run takes a few minutes (model
-download + 4 videos); watch it with `docker compose logs -f seed`. It's durable
+sample talk before `api`/`worker` start — so when `http://localhost:8000` first
+answers, the sample is already queryable. First run takes a few minutes (model
+download + 1 video); watch it with `docker compose logs -f seed`. It's durable
 (Qdrant Cloud) and idempotent, so every later `up` finds them indexed and starts
 in seconds. It's **best-effort by default** (`SEED_STRICT=false`): if seeding
 can't finish — e.g. a fresh clone whose empty Qdrant forces a live YouTube
@@ -156,8 +157,27 @@ module — run in separate terminals):
 uvicorn src.app:app --port 8000          # API + UI
 python -m src.worker                      # ingest worker
 uvicorn src.clip_service:app --port 8001  # CLIP service (optional; else set CLIP_SERVICE_URL empty)
-python -m src.seed                        # one-shot: index the 4 samples
+python -m src.seed                        # one-shot: index the sample
 ```
+
+### Run storage and Qdrant locally (no cloud bucket or vector store)
+
+Both read their location from env, so this is config, not code:
+
+- **Storage → local:** set `STORAGE_PROVIDER=local`. Uploads, frames and
+  transcripts land under `./data` and the API serves them itself — no bucket, no
+  keys. Works out of the box.
+- **Qdrant → local:** uncomment the `qdrant` service in `docker-compose.yml`,
+  then in `.env` set `QDRANT_URL=http://qdrant:6333` and leave `QDRANT_API_KEY`
+  blank. Vectors persist under `./data/qdrant`, shared by api + worker. (Blank
+  `QDRANT_URL` instead gives an *embedded* Qdrant, but that's single-process
+  only — fine for `examples/quickstart.py`, not the full api+worker app.)
+
+The models are already local-capable too (`IMAGE_EMBED_PROVIDER=clip` by default,
+`TEXT_EMBED_PROVIDER=fastembed` + `LLM_PROVIDER=ollama` for a keyless run). That
+leaves only the manifest DB (**Postgres**, `DATABASE_URL`) and the job queue
+(**Prefect**, `PREFECT_API_URL`) pointing at the cloud — both are env-driven, so
+a local Postgres + a self-hosted `prefect server` would complete an offline stack.
 
 ## The write path — upload to searchable vectors
 
@@ -604,7 +624,7 @@ fly scale count worker=2                      # more ingest throughput, anytime
 ```
 
 On every deploy, fly.toml's `release_command` runs the **seed gate** first
-(`python -m src.seed`); if the four samples can't be indexed the deploy aborts
+(`python -m src.seed`); if the sample can't be indexed the deploy aborts
 and the previous version keeps serving. The API machine auto-stops when idle;
 worker + clip stay up (scale both to 0 between ingest sessions — queued runs
 just wait). Set a CORS rule on the bucket for your site's origin (see
@@ -692,7 +712,7 @@ the four entrypoints as top-level modules in the package.
     ├── app.py               unified FastAPI app — videos + search routers, one port
     ├── worker.py            Prefect worker — serves "ms-ingest-video/ingest"
     ├── clip_service.py      embedding service — warm local models behind a URL
-    ├── seed.py              startup gate — indexes the 4 samples, then exits
+    ├── seed.py              startup gate — indexes the sample, then exits
     │                        ── core ──────────────────────────────────────────
     ├── config.py            every env knob in one place
     ├── db.py                Neon Postgres: manifest + status + per-user LLM rows
@@ -700,7 +720,7 @@ the four entrypoints as top-level modules in the package.
     ├── storage.py           object storage (aws|gcp|gcp_native|flyio|local)
     │                        + presigned PUT/GET, HEAD verify, batch delete
     ├── llm.py               back-compat shim -> providers/llm/
-    ├── samples.py           the four-sample "Deep Dive into LLMs" corpus
+    ├── samples.py           the single-sample "Deep Dive into LLMs" corpus
     ├── seeding.py           blocking seed-to-completion logic (used by seed.py)
     ├── providers/           ── pluggable models (see "Pluggable models") ─────
     │   ├── registry.py      the provider table: endpoints, models, dims, keys

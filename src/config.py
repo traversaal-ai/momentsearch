@@ -63,30 +63,29 @@ def _float(name: str, default: float) -> float:
 # --- Database (Neon Postgres) — videos manifest, source of truth ------------
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-# --- API auth ----------------------------------------------------------------
-# Bearer token required on every mutating endpoint (presign, register, delete,
-# retry). The tenant is the X-User-Id header (default "default") — swap this
-# for real per-user auth (JWT/Clerk) later without touching the data model:
-# every bucket key, Postgres row, and Qdrant point is already user_id-tagged.
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
-DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "default")
+# --- Single user -------------------------------------------------------------
+# This deployment is SINGLE-USER. There is no sign-in, no sign-up and no tenant
+# negotiation: every request acts as one account, and opening the app IS being
+# logged in as it.
+#
+# SINGLE_USER_ID is the tenant key that tags every bucket key, Postgres row and
+# Qdrant point. It stays "default" because that is what the pre-indexed sample
+# talks are already tagged with — changing it orphans them until their vectors
+# are re-tagged and their `default/<video>/` objects moved. SINGLE_USER_NAME is
+# only a label for the UI; nothing keys off it.
+#
+# The multi-tenant plumbing underneath is untouched — every row is still
+# user_id-tagged — so putting a real IdP back in front means resolving a
+# per-request user_id again, not reshaping the data.
+SINGLE_USER_ID = os.getenv("SINGLE_USER_ID", os.getenv("DEFAULT_USER_ID", "default"))
+SINGLE_USER_NAME = os.getenv("SINGLE_USER_NAME", "admin")
+DEFAULT_USER_ID = SINGLE_USER_ID   # legacy alias: the only tenant there is
 
-# --- Demo sign-in (email -> workspace) ---------------------------------------
-# An email is exchanged for a per-email workspace id (u_<uuid>) and an
-# HMAC-signed session token; every request then carries that token and the API
-# derives the tenant FROM THE SIGNATURE, so X-User-Id can't be spoofed by hand.
-#
-# This is deliberately NOT authentication: no password, no verification, so
-# anyone can type anyone's address. It exists so a demo has real, separate,
-# persistent workspaces. Put a real IdP (Clerk/JWT/OAuth) in front of
-# /api/auth/* before this faces users who matter — the tenant model underneath
-# doesn't change when you do.
-#
-# AUTH_SECRET signs the tokens. Unset = a random per-process secret, which means
-# sessions die on restart and DON'T work across replicas — set it in any real
-# deploy (openssl rand -hex 32).
-AUTH_SECRET = os.getenv("AUTH_SECRET", "").strip()
-SESSION_TTL_DAYS = _int("SESSION_TTL_DAYS", 30)
+# Kept for `python -m src.providers` and any operator script that still wants a
+# server-wide token. NOTE: with sign-in removed the API no longer demands it —
+# reaching the port is reaching the account. Don't expose this to the internet
+# without a reverse proxy that authenticates.
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 
 # --- Object storage (videos + frame thumbnails) ------------------------------
 # STORAGE_PROVIDER: local | aws | gcp | gcp_native | flyio
@@ -387,7 +386,7 @@ YT_REMOTE_COMPONENTS = [c.strip() for c in
                         os.getenv("YT_REMOTE_COMPONENTS", "ejs:github").split(",") if c.strip()]
 
 # --- Sample corpus ------------------------------------------------------------
-# On boot the worker auto-ingests the four "Deep Dive into LLMs" sample talks
+# On boot the worker auto-ingests the "Deep Dive into LLMs" sample talk
 # (src/samples.py) if they aren't indexed yet — a fresh clone is queryable on
 # the / page without running anything by hand. Set false to skip.
 SEED_SAMPLE_VIDEOS = _envbool("SEED_SAMPLE_VIDEOS", True)

@@ -28,6 +28,15 @@ from ..registry import (EmbedPreset, image_embed_preset, preset_dim,
                         text_embed_preset)
 
 
+class EmbedUnavailable(RuntimeError):
+    """The embedder can't run in THIS process — a missing dependency, not a bad
+    question. Carried as its own type so the API can answer 503 with the fix
+    instead of leaking a bare 500: a fresh clone that runs uvicorn without
+    installing torch hits this on its first question, and "Internal Server Error"
+    tells that person nothing.
+    """
+
+
 @dataclass(frozen=True)
 class EmbedConfig:
     """A fully-resolved embedder handle for ONE branch."""

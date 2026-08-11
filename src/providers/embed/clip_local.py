@@ -15,7 +15,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from .base import EmbedConfig, empty, normalize
+from .base import EmbedConfig, EmbedUnavailable, empty, normalize
 
 _lock = threading.Lock()  # sentence-transformers models are not thread-safe
 
@@ -23,7 +23,17 @@ _lock = threading.Lock()  # sentence-transformers models are not thread-safe
 @lru_cache
 def _model(name: str):
     # Imported here so remote/hosted modes never drag in torch.
-    from sentence_transformers import SentenceTransformer
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        # The fresh-clone failure: `pip install -r requirements.txt` was skipped,
+        # or uvicorn is running in an environment without torch. Say what to do.
+        raise EmbedUnavailable(
+            "Local CLIP needs sentence-transformers, which isn't installed in "
+            "this environment. Either `pip install -r requirements.txt`, or point "
+            "EMBED_SERVICE_URL at a running clip_service (docker compose does "
+            f"this for you). Underlying import error: {exc}"
+        ) from exc
 
     return SentenceTransformer(name)
 

@@ -62,8 +62,8 @@ def _user_filter(user_id: str, video_id: str | None = None,
                  include_samples: bool = False) -> qm.Filter:
     """Tenant scope for a search/delete, optionally widened to the shared samples.
 
-    include_samples yields `(mine) OR (the sample corpus)` — exactly the four
-    curated videos owned by the default tenant, never anything else that tenant
+    include_samples yields `(mine) OR (the sample corpus)` — exactly the sample
+    corpus owned by the default tenant, never anything else that tenant
     owns. Written as two nested must-groups under `should` so the sample branch
     can't be satisfied by a user_id match alone: guessing another workspace's
     video id still matches nothing.

@@ -3,8 +3,8 @@
 This is the startup gate: seed.py runs it as a one-shot container that must
 exit 0 before api/worker start (docker-compose depends_on ...
 service_completed_successfully), so the UI is never reachable with a
-half-indexed corpus. Idempotent and durable (Qdrant Cloud): once the four
-talks are indexed they stay indexed, so every later start finishes in seconds.
+half-indexed corpus. Idempotent and durable (Qdrant Cloud): once the sample
+talk is indexed it stays indexed, so every later start finishes in seconds.
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def _not_indexed() -> list[dict]:
     abort a deploy by timing out the release-command seed.
 
     EMBED_VERSION is derived from the visual provider + model, so switching either
-    one bumps it and auto-re-seeds all four samples. The layout probe covers the
+    one bumps it and auto-re-seeds the sample(s). The layout probe covers the
     storage re-key: a row can say 'indexed' while its thumbnails live under the
     old keys (and would 404), so we re-ingest it onto the new `<user>/<video>/`
     keys. Cheap HEAD, and it self-heals only the samples that actually moved."""
@@ -105,8 +105,8 @@ def _not_indexed() -> list[dict]:
 
 
 def seed_to_completion() -> bool:
-    """Index every sample, retrying failures. Returns True iff all four end up
-    indexed. Blocking — the caller (seed.py) gates the app on this."""
+    """Index every sample, retrying failures. Returns True iff the sample(s) end
+    up indexed. Blocking — the caller (seed.py) gates the app on this."""
     if not config.SEED_SAMPLE_VIDEOS:
         print("[seed] SEED_SAMPLE_VIDEOS=false — skipping", flush=True)
         return True
@@ -114,8 +114,8 @@ def seed_to_completion() -> bool:
     db.init_schema()
     vector_store.ensure_collection()
 
-    # Light sampling for the demo corpus so all four finish in ~2 min on CPU
-    # (the Karpathy talk is 1h). User uploads run in separate Prefect
+    # Light sampling for the demo corpus so the one short 8m talk seeds quickly
+    # on CPU. User uploads run in separate Prefect
     # subprocesses that re-read config, so they keep full quality.
     config.MAX_FRAMES = min(config.MAX_FRAMES, 60)
     config.FRAME_INTERVAL_SEC = max(config.FRAME_INTERVAL_SEC, 5.0)
@@ -147,7 +147,7 @@ def seed_to_completion() -> bool:
         print(f"[seed] STILL not indexed after {_MAX_PASSES} passes: {names}", flush=True)
         return False
     _backfill_transcripts()
-    print("[seed] sample corpus complete — all four indexed", flush=True)
+    print("[seed] sample corpus complete — sample indexed", flush=True)
     return True
 
 

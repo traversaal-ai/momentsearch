@@ -4,9 +4,27 @@
 #   docker compose up --build
 #   API + UI:        http://localhost:8000
 #   Run/queue view:  https://app.prefect.cloud -> Runs
-# Vector store is Qdrant Cloud via QDRANT_URL in .env. To run a local Qdrant
-# instead, add a qdrant service here and blank QDRANT_URL.
+# Vector store defaults to Qdrant Cloud via QDRANT_URL in .env. To run Qdrant
+# LOCALLY instead, uncomment the `qdrant` service below and set (in .env):
+#   QDRANT_URL=http://qdrant:6333     (leave QDRANT_API_KEY blank)
+# Storage is already local when STORAGE_PROVIDER=local (files under ./data) —
+# no service needed. Together that's the whole stack local except the queue
+# (Prefect) and the manifest DB (Postgres). See README "Run it fully local".
 services:
+  # Local vector store (OPTIONAL) — uncomment to run Qdrant on your machine
+  # instead of Qdrant Cloud. Data persists under ./data/qdrant, and unlike the
+  # embedded single-process mode, api + worker + seed can all share it. After
+  # uncommenting, set QDRANT_URL=http://qdrant:6333 in .env (blank the API key),
+  # and optionally add `qdrant` to the depends_on of api/worker/seed (it boots
+  # fast and the app retries, so this is just to silence first-second races).
+  # qdrant:
+  #   image: qdrant/qdrant:latest
+  #   ports:
+  #     - "6333:6333"          # REST/gRPC — also lets you open the dashboard
+  #   volumes:
+  #     - ./data/qdrant:/qdrant/storage
+  #   restart: unless-stopped
+
   # The inference service: ONE warm CLIP model behind a URL. api + worker send
   # batches here instead of each flow run paying a fresh ~15-30s model load.
   # Scaling embedding = scaling THIS service (CPU here; same container on a
@@ -21,12 +39,12 @@ services:
       - hf_cache:/root/.cache     # model weights cached across restarts
     restart: unless-stopped
 
-  # STARTUP GATE — indexes the four sample talks and exits. api + worker wait
+  # STARTUP GATE — indexes the sample talk and exits. api + worker wait
   # for it to finish (service_completed_successfully), so the UI is NEVER
   # reachable with a half-indexed corpus: when localhost:8000 answers, the
   # samples are ready. Idempotent + durable (Qdrant Cloud) — after the first
   # successful run this exits in seconds. First run takes a few minutes
-  # (model download + 4 videos); watch its logs: docker compose logs -f seed
+  # (model download + 1 video); watch its logs: docker compose logs -f seed
   seed:
     build: .
     command: python -m src.seed

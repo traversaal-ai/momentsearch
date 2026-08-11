@@ -1,4 +1,4 @@
-/* /demo — the open door: search the four shared sample talks.
+/* /demo — the open door: search the shared sample corpus.
  *
  * Read-only and stateless by design: no sessions, no uploads, no saved history.
  * Anonymous callers are the default tenant, which OWNS the samples, so no
@@ -6,11 +6,15 @@
  */
 let CITES=[], SAMPLE_IDS=[];
 
+/* Same hero treatment as the landing page: the coral word writes itself in
+   behind a nib, then signs off with the underline. .ink is what gets uncovered. */
 const UNDERLINE = `<svg viewBox="0 0 320 14" preserveAspectRatio="none"><path d="M4 9C70 3 154 2 316 6"/></svg>`;
 const TITLE=[{text:"A Deep Dive into"},{text:"LLMs.",coral:true}];
 let _w=0;
 $("#heroTitle").innerHTML = TITLE.map(p=>p.text.split(" ").map(w=>{
-  const inner = p.coral ? `<span class="mark text-coral">${esc(w)}${UNDERLINE}</span>` : esc(w);
+  const inner = p.coral
+    ? `<span class="mark text-coral"><span class="ink">${esc(w)}</span><i class="nib" aria-hidden="true"></i>${UNDERLINE}</span>`
+    : esc(w);
   return `<span class="word" style="--i:${_w++}">${inner}</span>`;
 }).join(" ")).join(" ");
 
@@ -112,8 +116,8 @@ $("#article").addEventListener("click",e=>{
 });
 
 /* ---------- typewriter placeholder + example chips ---------- */
-const EXAMPLES=["a diagram of the attention mechanism","an animation of a neural network",
-  "a slide listing examples of large language models","a person speaking on stage next to slides"];
+const EXAMPLES=["what is a large language model","how an LLM predicts the next word",
+  "an animation of a neural network","training a model on huge amounts of text"];
 function ghostIdle(){ return !qEl.value && document.activeElement!==qEl; }
 function ghostSync(){ $("#ghost").classList.toggle("hide", !ghostIdle()); }
 (function typewriter(){

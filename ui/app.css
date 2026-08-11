@@ -63,14 +63,44 @@ html,body{background:#FBF7F0;color:#1E1B16;font-family:Inter,system-ui,sans-seri
   animation-delay:calc(200ms + var(--i,0)*70ms)}
 @keyframes word{from{opacity:0;transform:translateY(20px) rotate(1.4deg)}to{opacity:1;transform:none}}
 
-/* …and the coral word draws its own underline once the words have landed.
+/* …then the coral word writes itself. A nib sweeps left to right and the
+ * letters appear behind it, so the word reads as being written rather than
+ * faded in. The clip and the nib share one easing curve and one duration, which
+ * is what keeps the pen tip exactly on the edge of the ink for the whole sweep
+ * — they are two properties of the same motion, so they must not drift.
+ *
+ * The curve is symmetric ease-in-out on purpose: a hand accelerates, holds a
+ * steady pace across the word, then settles. A front-loaded ease-out curve
+ * makes the pen sprint through the first letters and crawl through the last,
+ * which reads as a wipe rather than as writing.
+ *
+ * The word's .word wrapper still runs the cascade, but its content starts fully
+ * clipped, so nothing shows through early: the slot arrives empty and then
+ * fills. The .75s delay lands just after the cascade has settled.              */
+.mark{position:relative;white-space:nowrap}
+.mark .ink{display:inline-block;clip-path:inset(0 100% 0 0);
+  animation:write 1.05s .75s cubic-bezier(.42,0,.58,1) forwards}
+@keyframes write{to{clip-path:inset(0 -.06em 0 0)}}
+
+/* The nib: a short coral stroke at the leading edge that lifts off the page
+ * once the word is finished. Its own width is excluded from the travel so it
+ * stops flush with the final letter instead of overshooting.                  */
+.mark .nib{position:absolute;top:.1em;bottom:.2em;left:0;width:2px;border-radius:2px;
+  background:#FF5A3C;opacity:0;transform:translateX(-1px);
+  animation:nib 1.05s .75s cubic-bezier(.42,0,.58,1) forwards}
+@keyframes nib{
+  0%{left:0;opacity:1}
+  88%{opacity:1}
+  100%{left:100%;opacity:0}
+}
+
+/* …and it signs off with the underline, once the writing is done (.75 + 1.05).
  * non-scaling-stroke keeps the line an even weight despite the non-uniform
  * scale that stretching the viewBox to the word's width implies.            */
-.mark{position:relative;white-space:nowrap}
 .mark svg{position:absolute;left:0;width:100%;bottom:-.16em;height:.36em;overflow:visible}
 .mark path{fill:none;stroke:#FF5A3C;stroke-width:3.4;stroke-linecap:round;
   vector-effect:non-scaling-stroke;stroke-dasharray:340;stroke-dashoffset:340;
-  animation:draw .9s 1s cubic-bezier(.4,0,.2,1) forwards}
+  animation:draw .75s 1.8s cubic-bezier(.4,0,.2,1) forwards}
 @keyframes draw{to{stroke-dashoffset:0}}
 
 /* ── Typewriter placeholder ────────────────────────────────────────────────
@@ -102,8 +132,11 @@ body.asking #heroInner{max-width:72rem}
 body.asking #heroText,body.asking #heroExtras{opacity:0;max-height:0;margin:0;
   overflow:hidden;filter:blur(2px);pointer-events:none}
 
-/* Answer first, library second — once there's something to read. */
-main{display:flex;flex-direction:column}
+/* Answer first, library second — once there's something to read. Scoped to the
+ * page that actually has those sections (/demo): a bare `main` selector here
+ * also turned /app's <main> into a flex column, which its own layout does not
+ * ask for. */
+main:has(#library){display:flex;flex-direction:column}
 #library{order:2}
 #resultsWrap{order:3}
 body.asking #library{order:3}
@@ -115,15 +148,72 @@ body.asking #resultsWrap{order:2}
   animation-delay:calc(var(--i,0)*55ms)}
 @keyframes pop{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:none}}
 
-/* ── Workspace panes (/app) ────────────────────────────────────────────────
- * Sessions | Playground | Videos sit side by side from xl up. Below that only
- * one is on screen at a time, chosen by the header's tabs (body[data-pane]).  */
-@media (max-width:1279px){
-  .pane{display:none}
-  body[data-pane="sessions"] #paneSessions,
-  body[data-pane="chat"]     #paneChat,
-  body[data-pane="videos"]   #paneVideos{display:flex}
-}
+/* ── Workspace steps (/app) ────────────────────────────────────────────────
+ * Onboarding IS the workspace: add → index → ask, one panel on screen at a
+ * time, chosen by body[data-step]. The step is derived from the session's own
+ * state (see workspace.js::derivedStep), so a reload never lands on the wrong
+ * one and there is no "onboarded" flag to go stale.                          */
+.stepPanel{display:none}
+body[data-step="1"] #step1,
+body[data-step="2"] #step2,
+body[data-step="3"] #step3{display:block}
+
+/* The stepper. Three states per step, and they must be told apart at a glance
+ * WITHOUT relying on colour alone: done carries a ✓ glyph, current is filled
+ * and bold, ahead is hollow and dimmed. */
+.stepBtn{cursor:pointer}
+.stepBtn .dot{display:flex;align-items:center;justify-content:center;flex:none;
+  width:26px;height:26px;border-radius:999px;border:1.5px solid #E7DECF;background:#fff;
+  color:#6B6357;font-size:12px;font-weight:700;font-family:Fraunces,Georgia,serif;
+  transition:background .25s,border-color .25s,color .25s,transform .25s}
+.stepBtn .lab{color:#6B6357;transition:color .25s}
+/* Ahead of you: not reachable yet, and it says so by being inert. */
+.stepBtn[disabled]{cursor:default}
+.stepBtn[disabled] .dot,.stepBtn[disabled] .lab,.stepBtn[disabled] .sub{opacity:.5}
+/* Reached but not open. */
+.stepBtn[data-state="done"] .dot{background:rgba(255,90,60,.12);border-color:rgba(255,90,60,.4);color:#E8472B}
+.stepBtn[data-state="done"] .lab{color:#1E1B16}
+/* Open. */
+.stepBtn[data-state="current"] .dot{background:#FF5A3C;border-color:#FF5A3C;color:#fff;transform:scale(1.06)}
+.stepBtn[data-state="current"] .lab{color:#1E1B16}
+.stepBtn:not([disabled]):hover .dot{border-color:#FF5A3C}
+
+/* Session name, edited in place: an input that looks like a heading until you
+ * touch it. No pencil to hunt for, no dialog to dismiss. */
+.titleInput{border:1px solid transparent;transition:border-color .18s,background .18s}
+.titleInput:hover{border-color:#E7DECF;background:#fff}
+.titleInput:focus{border-color:#FF5A3C;background:#fff}
+
+/* ── Ingest pipeline (step 2) ──────────────────────────────────────────────
+ * The five stages a video moves through, drawn as a track per video so the
+ * wait is legible instead of a spinner: which stage, and how far into it.    */
+.stage{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+.stage .bar{flex:1;height:4px;border-radius:999px;background:#F3ECE0;overflow:hidden}
+.stage .bar i{display:block;height:100%;width:0;background:#FF5A3C;border-radius:999px;
+  transition:width .6s ease}
+.stage[data-on="done"] .bar i{width:100%}
+.stage[data-on="now"]  .bar i{width:var(--p,38%)}
+/* Indeterminate: a stage that's running but reports no percentage. */
+.stage[data-on="now"][data-indet] .bar i{width:38%;animation:sweep 1.6s ease-in-out infinite}
+.stage .nm{font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:#6B6357;
+  white-space:nowrap}
+.stage[data-on="now"] .nm{color:#E8472B;font-weight:700}
+.stage[data-on="done"] .nm{color:#1f7a43}
+
+/* ── Answer (page 3) ───────────────────────────────────────────────────────
+ * One answer on screen at a time — asking again replaces it. It fades in so the
+ * swap reads as a new result rather than a flicker.                          */
+#answer .ans{animation:fi .45s ease both}
+
+/* With nothing asked yet the search sits in the MIDDLE of its column; once
+ * there's an answer the search shrinks to the top and the answer takes the
+ * scroll. body[data-ans] is set by renderAnswer. Without this the column is a
+ * few controls under the header and several hundred pixels of nothing, which is
+ * what made the page read as broken rather than empty.                        */
+body[data-ans="0"] #askTop{flex:1 1 auto;display:flex;flex-direction:column;justify-content:center}
+body[data-ans="0"] #answer{flex:0 0 auto}
+body[data-ans="1"] #askTop{flex:0 0 auto}
+body[data-ans="1"] #answer{flex:1 1 auto;min-height:0}
 
 /* ── Sign-in sheet ─────────────────────────────────────────────────────────
  * A sheet from the bottom on phones, a centred card on desktop.              */
@@ -133,6 +223,13 @@ body.asking #resultsWrap{order:2}
 /* Search button: a quiet pulse while the answer is in flight. */
 #go.busy{animation:pulse 1.15s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.55;transform:scale(.94)}}
+
+/* The stage the server is on right now. One looping dot, and only ever on the
+ * CURRENT stage — the finished ones carry a static ✓, so the motion marks the
+ * live step rather than decorating the whole list. */
+.dotPulse{display:block;width:7px;height:7px;border-radius:999px;background:#FF5A3C;
+  animation:dotPulse 1.1s ease-in-out infinite}
+@keyframes dotPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.72)}}
 
 /* ── Ingest progress rail ──────────────────────────────────────────────────
  * The pipeline stage a video is in, drawn INSIDE its chip: a determinate fill
@@ -150,6 +247,10 @@ body.asking #resultsWrap{order:2}
     transition-duration:1ms!important;scroll-behavior:auto!important}
   .word,.rise{opacity:1}
   .mark path{stroke-dashoffset:0}
+  /* the written word must end up readable, and the pen has no business
+     appearing at all when motion is unwelcome */
+  .mark .ink{clip-path:none}
+  .mark .nib{display:none}
 }
 
 /* ---- Synced transcript panel (the player modal) ---- */
