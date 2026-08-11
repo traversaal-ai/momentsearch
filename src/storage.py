@@ -19,6 +19,7 @@ upload, and prefix listing + batch delete (a video's frames go in one call).
 from __future__ import annotations
 
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 
@@ -233,11 +234,22 @@ def delete_prefix(prefix: str) -> int:
     elif STORAGE_PROVIDER == "gcp_native":
         from google.api_core.exceptions import NotFound
         bucket = _gcs_bucket()
-        for k in keys:
+
+        def _rm(k: str) -> None:
             try:  # a stale listing may name an object already gone — ignore it
                 bucket.blob(k).delete()
             except NotFound:
                 pass
+
+        # One HTTP round trip per object, and GCS has no batch-delete verb. Serial
+        # that was ~250ms x N — a 200-frame video took the better part of a minute
+        # and a delete looked hung. These calls are pure network wait, so threads
+        # collapse it to roughly N/16 round trips.
+        if len(keys) > 1:
+            with ThreadPoolExecutor(max_workers=min(16, len(keys))) as ex:
+                list(ex.map(_rm, keys))
+        else:
+            _rm(keys[0])
     else:
         for i in range(0, len(keys), 1000):  # S3 DeleteObjects caps at 1000/call
             _s3().delete_objects(

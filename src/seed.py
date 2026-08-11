@@ -21,6 +21,11 @@ from .seeding import seed_to_completion
 
 
 def main() -> int:
+    # Deploy-time gate: the release_command runs this first, so it's the earliest
+    # place to catch a deploy carrying local settings. Warns (or aborts, under
+    # STRICT_DEPLOY_CHECK) before the broken version would go live.
+    from . import preflight
+    preflight.check("seed / release_command")
     if seed_to_completion():
         return 0
     if config.SEED_STRICT:

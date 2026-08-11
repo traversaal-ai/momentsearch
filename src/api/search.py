@@ -7,7 +7,10 @@ playback stream via presigned URLs and never touch this process.
 """
 from __future__ import annotations
 
+import json
+import queue
 import re
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -63,8 +66,21 @@ def get_config(uid: str = Depends(user_id_dep)):
         "text_embed_model": embeddings["text"]["model"],
         "frame_strategy": config.FRAME_STRATEGY,
         "top_k": config.TOP_K,
+        # Speaker recognition ("who said what") is available only when Gemini is
+        # configured; the upload UI uses this to enable/disable its checkbox.
+        "diarize_available": bool(config.DIARIZE_ENABLED and config.GEMINI_API_KEY),
         "upload_mode": "presigned" if storage.presign_capable() else "direct",
         "max_upload_mb": config.MAX_UPLOAD_MB,
+        # Google Drive import. Both ids are public by design — they're client-side
+        # identifiers for Google's Picker, not secrets. `enabled` is false until
+        # both are set, and the workspace button then says what's missing rather
+        # than opening a picker that can't work. No token of any kind reaches us:
+        # the browser fetches the picked file and uploads it like any other file.
+        "gdrive": {
+            "enabled": bool(config.GDRIVE_CLIENT_ID and config.GDRIVE_API_KEY),
+            "client_id": config.GDRIVE_CLIENT_ID,
+            "api_key": config.GDRIVE_API_KEY,
+        },
     }
 
 
@@ -194,6 +210,63 @@ def ask(req: AskRequest, uid: str = Depends(user_id_dep)):
                               video_ids=video_ids)
     except EmbedUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
+
+
+@router.post("/api/ask_stream")
+def ask_stream(req: AskRequest, uid: str = Depends(user_id_dep)):
+    """/api/ask, but it reports what it is doing while it does it.
+
+    Same Server-Sent Events contract as the session-scoped twin in
+    src/api/sessions.py:
+
+        {"type":"stage","stage":"searching","detail":"…"}   as each stage BEGINS
+        {"type":"done","result":{…}}                        the /api/ask payload
+        {"type":"error","detail":"…"}                       setup/pipeline failure
+
+    Why this exists: /demo used plain /api/ask and could only paint a static
+    shimmer for the ~6s an answer takes, which reads as a hung page. The stages
+    come from real boundaries inside rag.search (on_stage), never a timer.
+
+    The pipeline blocks, so it runs on a worker thread and pushes events through
+    a queue this generator drains. Validation happens FIRST, on this thread, so a
+    bad request is still a clean 400 rather than an error event.
+    """
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(400, "Empty question.")
+    video_ids = req.video_ids or None
+    events: queue.Queue = queue.Queue()
+
+    def work():
+        try:
+            result = rag_search.ask(
+                question, uid, top_k=req.top_k, video_id=req.video_id,
+                video_ids=video_ids,
+                on_stage=lambda stage, detail="": events.put(
+                    {"type": "stage", "stage": stage, "detail": detail}))
+            events.put({"type": "done", "result": result})
+        except EmbedUnavailable as exc:
+            events.put({"type": "error", "detail": str(exc)})
+        except Exception as exc:                       # never leave the UI hanging
+            events.put({"type": "error", "detail": f"{type(exc).__name__}: {exc}"})
+        finally:
+            events.put(None)                           # sentinel: close the stream
+
+    threading.Thread(target=work, daemon=True).start()
+
+    def stream():
+        while True:
+            item = events.get()
+            if item is None:
+                return
+            # SSE frame: "data: <json>" terminated by a BLANK line.
+            yield "data: " + json.dumps(item, default=str) + "\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      # Proxies buffer SSE by default, which would
+                                      # deliver every stage in one lump at the end.
+                                      "X-Accel-Buffering": "no"})
 
 
 # ── Transcript (full timed transcript for the synced player panel) ───────────

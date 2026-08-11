@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 from dataclasses import dataclass, replace
 
 from ... import config
@@ -31,10 +32,13 @@ SYSTEM = (
     "one-line direct answer, then explain in short paragraphs — ONE paragraph per "
     "distinct point. Keep it focused, don't pad. No preamble, don't restate the "
     "question.\n"
-    "2. Ground every claim in the moments and cite the moment number(s) in square "
-    "brackets, e.g. [1] or [2, 3]. When the question is about what was said, quote "
-    "the transcript accurately — keep the actual wording and numbers, don't alter "
-    "or round them.\n"
+    "2. Cite a moment [n] ONLY when that moment's frame or transcript actually "
+    "supports the specific sentence. NEVER attach a citation to a moment that "
+    "doesn't contain what you're claiming — a wrong citation is worse than none. A "
+    "general statement of what the video is broadly about (e.g. from its title, or "
+    "the overall gist of the frames) may stay UNCITED; that's fine. When you cite, "
+    "use square brackets, e.g. [1] or [2, 3]; when the question is about what was "
+    "said, quote the transcript accurately — keep the wording and numbers.\n"
     "3. Group the relevant moments by the point they make:\n"
     "   - Moments that make the SAME point (especially several from the same "
     "video) belong TOGETHER in ONE paragraph, cited together, e.g. [1, 2]. Do not "
@@ -43,11 +47,20 @@ SYSTEM = (
     "SEPARATE paragraphs, each with its own citation.\n"
     "   Cover every distinct relevant point — don't merge unrelated ones and don't "
     "drop any.\n"
-    "4. Don't use outside knowledge or invent details that aren't in the moments.\n"
+    "4. You MAY use the video's title and the obvious overall context to say what "
+    "it is broadly about (uncited). But do NOT invent SPECIFIC facts, quotes, "
+    "numbers, opinions or claims that aren't actually in the moments — if a "
+    "specific detail isn't shown or said in a moment, don't state it, and don't "
+    "cite one for it.\n"
     "5. Abstain ONLY as a last resort: if — and only if — none of the moments are "
     "relevant to the question at all, reply with a single sentence saying you "
     "couldn't find it in the video. If even one moment is relevant, ANSWER from "
-    "it; do not refuse just because the match is partial."
+    "it; do not refuse just because the match is partial.\n"
+    "6. SPEAKER ATTRIBUTION — only for moments tagged 'speaker: <name>'; attribute "
+    "that moment's point to that exact person by name. NEVER invent a name or write "
+    "a placeholder like \"Unnamed Speaker\"; don't attribute untagged moments to "
+    "anyone. If (and only if) the instructions below the question ask for a "
+    "\"Who said what\" table, add it as the very last thing in your answer."
 )
 
 
@@ -122,8 +135,23 @@ def missing_requirement(cfg: LLMConfig) -> str | None:
 
 # ── Prompt assembly (identical across providers) ──────────────────────────────
 
-def intro(question: str, n: int) -> str:
-    return (
+_ANON_SPEAKER = re.compile(r"^\s*speaker\s*\d+\s*$", re.I)   # "Speaker 1", "Speaker 2"
+
+
+def named_speakers(moments: list[dict]) -> list[str]:
+    """Distinct REAL speaker names across the moments (anonymous "Speaker N"
+    placeholders and blanks excluded), in first-seen order."""
+    out: list[str] = []
+    for m in moments:
+        s = (m.get("speaker") or "").strip()
+        if s and not _ANON_SPEAKER.match(s) and s not in out:
+            out.append(s)
+    return out
+
+
+def intro(question: str, moments: list[dict]) -> str:
+    n = len(moments)
+    text = (
         f"QUESTION: {question}\n\n"
         f"Answer this question using the {n} moments below (numbered 1 to {n}). "
         "Each has a timestamp and a video frame and/or a transcript excerpt. If "
@@ -131,10 +159,26 @@ def intro(question: str, n: int) -> str:
         "direct answer grounded in the relevant moment(s), cited as [n]. Only say "
         "you couldn't find it if none of the moments are relevant."
     )
+    # The "Who said what" table is decided HERE (deterministically), not left to
+    # the model: add the directive only when 2+ real names actually appear.
+    names = named_speakers(moments)
+    if len(names) >= 2:
+        text += (
+            f"\n\nThese moments feature multiple speakers ({', '.join(names)}). "
+            "You MUST end your answer with a markdown table titled exactly "
+            "`### Who said what`, with the header row EXACTLY "
+            "`| Speaker | Their point | Source |` followed by a `| --- | --- | --- |` "
+            "row, then ONE row per speaker: their point in a single line in their "
+            "own voice, and Source = the moment number(s) like [1] or [2, 3]. "
+            "Every row must start and end with a pipe `|`. This table is required."
+        )
+    return text
 
 
 def label(i: int, m: dict) -> str:
     line = f"[{i}] @ {m.get('timestamp', '')}"
+    if m.get("speaker"):
+        line += f' speaker: {m["speaker"]}'
     if m.get("transcript"):
         line += f' transcript: "{m["transcript"]}"'
     if m.get("image") is None:

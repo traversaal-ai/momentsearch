@@ -10,7 +10,7 @@ def answer(cfg: LLMConfig, question: str, moments: list[dict]) -> str:
     import anthropic
 
     client = anthropic.Anthropic(api_key=cfg.api_key, base_url=cfg.base_url or None)
-    blocks: list[dict] = [{"type": "text", "text": intro(question, len(moments))}]
+    blocks: list[dict] = [{"type": "text", "text": intro(question, moments)}]
     for i, m in enumerate(moments, 1):
         blocks.append({"type": "text", "text": label(i, m)})
         if m.get("image"):

@@ -10,9 +10,11 @@
 #   QDRANT_URL=http://qdrant:6333     (leave QDRANT_API_KEY blank)
 # Then `docker compose up` brings Qdrant up on its own. Cloud users set neither,
 # so the qdrant service never runs for them.
+# The manifest DB works the same way — add local-postgres to COMPOSE_PROFILES and
+# point DATABASE_URL at the bundled service (see the `postgres` service below).
 # Storage is already local when STORAGE_PROVIDER=local (files under ./data) —
 # no service needed. Together that's the whole stack local except the queue
-# (Prefect) and the manifest DB (Postgres). See README "Run storage and Qdrant locally".
+# (Prefect). See README "Run storage and Qdrant locally".
 #
 # Image variants: everything builds the FAT app image by default (WITH_TORCH=true).
 # api + worker take the arg, so `WITH_TORCH=false docker compose build` makes them
@@ -33,6 +35,40 @@ services:
       - "6333:6333"          # REST/gRPC — also opens the dashboard
     volumes:
       - ./data/qdrant:/qdrant/storage
+    restart: unless-stopped
+
+  # Local manifest DB — starts ONLY when .env has local-postgres in
+  # COMPOSE_PROFILES, same deal as qdrant above: describe it in .env, `docker
+  # compose up` does the rest. Pair it with
+  #   DATABASE_URL=postgresql://ms:ms@postgres:5432/ms
+  # (no sslmode — this one is plaintext on the compose network). Cloud users set
+  # neither, so the service is never created for them.
+  #
+  # Unlike qdrant this one IS gated on a healthcheck: first boot runs initdb,
+  # which takes a few seconds, and seed/api/worker connect immediately on start —
+  # without the gate they'd race it and crash. The `required: false` on each
+  # depends_on entry below is what keeps that gate optional: it means "wait for
+  # postgres IF it's in the project". A plain depends_on is a hard reference, so
+  # with the profile off compose would reject the whole project with
+  # `service "api" depends on undefined service "postgres"` — breaking every
+  # cloud user. Data lives in a named volume (not a ./data bind mount, which
+  # fails initdb on Windows over ownership).
+  postgres:
+    image: postgres:16
+    profiles: ["local-postgres"]
+    environment:
+      POSTGRES_USER: ms
+      POSTGRES_PASSWORD: ms
+      POSTGRES_DB: ms
+    ports:
+      - "5433:5432"          # host-side psql/TablePlus; 5433 dodges a native 5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ms -d ms"]
+      interval: 2s
+      timeout: 3s
+      retries: 30            # ~60s for the first initdb
     restart: unless-stopped
 
   # The inference service: ONE warm CLIP model behind a URL. api + worker send
@@ -73,7 +109,11 @@ services:
       - ./data:/app/data
       - hf_cache:/root/.cache
     depends_on:
-      - clip
+      clip:
+        condition: service_started
+      postgres:                       # local-postgres profile only; see above
+        condition: service_healthy
+        required: false
     restart: "no"
 
   api:
@@ -99,6 +139,9 @@ services:
         condition: service_started
       seed:
         condition: service_completed_successfully   # UI up only after samples ready
+      postgres:                       # local-postgres profile only; see above
+        condition: service_healthy
+        required: false
     restart: unless-stopped
 
   worker:
@@ -124,9 +167,13 @@ services:
         condition: service_started
       seed:
         condition: service_completed_successfully
+      postgres:                       # local-postgres profile only; see above
+        condition: service_healthy
+        required: false
     restart: unless-stopped
     # Need more throughput? Replicas multiply it (all share the one clip model):
     # docker compose up -d --scale worker=3   (-> 6 videos at once)
 
 volumes:
   hf_cache:
+  pgdata:          # local-postgres only; unused (and uncreated) on a cloud DATABASE_URL

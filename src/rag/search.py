@@ -230,6 +230,7 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
             "deeplink": _deeplink(meta, vid, ms),
             "score": round(w.get("blend", w["rrf"]), 4),
             "transcript": (tx or {}).get("text"),
+            "speaker": (tx or {}).get("speaker"),   # who said it (diarized), if any
             "modalities": sorted(w["modalities"]),
         })
     return {"citations": citations, "best_visual": best_visual, "best_text": best_text}
@@ -276,7 +277,8 @@ def _build_moments(user_id: str, citations: list[dict[str, Any]]) -> list[dict]:
     with ThreadPoolExecutor(max_workers=6) as ex:
         images = list(ex.map(frame_bytes, citations))
     return [{"image": img, "transcript": c.get("transcript"),
-             "timestamp": c["timestamp"]} for img, c in zip(images, citations)]
+             "speaker": c.get("speaker"), "timestamp": c["timestamp"]}
+            for img, c in zip(images, citations)]
 
 
 def resolve_llm(user_id: str) -> tuple[llm.LLMConfig | None, str]:

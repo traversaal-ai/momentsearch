@@ -16,7 +16,7 @@ def answer(cfg: LLMConfig, question: str, moments: list[dict]) -> str:
     from google.genai import types
 
     client = genai.Client(api_key=cfg.api_key)
-    parts: list[types.Part] = [types.Part.from_text(text=intro(question, len(moments)))]
+    parts: list[types.Part] = [types.Part.from_text(text=intro(question, moments))]
     for i, m in enumerate(moments, 1):
         parts.append(types.Part.from_text(text=label(i, m)))
         if m.get("image"):

@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS ms_videos (
 CREATE INDEX IF NOT EXISTS ms_videos_user_idx   ON ms_videos (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ms_videos_status_idx ON ms_videos (status);
 CREATE INDEX IF NOT EXISTS ms_videos_hash_idx   ON ms_videos (user_id, source_hash);
+-- Speaker recognition ("who said what") is opt-in per video (a checkbox at
+-- upload). Added as a migration so databases created before it get the column.
+ALTER TABLE ms_videos ADD COLUMN IF NOT EXISTS diarize BOOLEAN NOT NULL DEFAULT false;
 
 -- Bring-your-own-model: a tenant's own answer model — any provider name from
 -- src/providers/registry.py, or their own OpenAI-compatible server via base_url.
@@ -134,17 +137,19 @@ def init_schema() -> None:
 
 def upsert_pending(video: dict[str, Any]) -> dict:
     """Insert a video as pending; re-submitting an existing id resets it."""
+    video = {"diarize": False, **video}   # default the optional per-video flag
     with pool().connection() as conn:
         row = conn.execute(
             """
-            INSERT INTO ms_videos (id, user_id, source, url, storage_key, source_hash, title, status)
+            INSERT INTO ms_videos (id, user_id, source, url, storage_key, source_hash, title, diarize, status)
             VALUES (%(id)s, %(user_id)s, %(source)s, %(url)s, %(storage_key)s,
-                    %(source_hash)s, %(title)s, 'pending')
+                    %(source_hash)s, %(title)s, %(diarize)s, 'pending')
             ON CONFLICT (id) DO UPDATE SET
                 url = COALESCE(EXCLUDED.url, ms_videos.url),
                 storage_key = COALESCE(EXCLUDED.storage_key, ms_videos.storage_key),
                 source_hash = COALESCE(EXCLUDED.source_hash, ms_videos.source_hash),
                 title = COALESCE(EXCLUDED.title, ms_videos.title),
+                diarize = EXCLUDED.diarize,
                 status = 'pending', error = NULL, progress = NULL, updated_at = now()
             RETURNING *
             """,

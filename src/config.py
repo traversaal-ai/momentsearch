@@ -144,6 +144,18 @@ PRESIGN_GET_EXPIRY_S = _int("PRESIGN_GET_EXPIRY_S", 3600)  # thumbnails / playba
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 2048)                # register rejects bigger objects
 ALLOWED_UPLOAD_TYPES = ("video/",)                         # content-type must start with
 
+# --- Google Drive import (browser-side; no server credentials, no stored token)
+# "Import from Drive" is Google's own Picker popup: the user consents, picks a
+# file, and the BROWSER downloads it and PUTs it to the same presigned URL a
+# normal upload uses. So the server never sees a Google token, stores no refresh
+# token, and needs no new endpoint — the import arrives as an ordinary upload.
+# Both values below are public-by-design (they ship to the page); the button
+# only appears when both are set. Scope is drive.file — access limited to the
+# files the user explicitly picks, which is also the scope that needs no Google
+# app verification / security assessment. See README "Import from Google Drive".
+GDRIVE_CLIENT_ID = os.getenv("GDRIVE_CLIENT_ID", "")   # OAuth 2.0 Web client id
+GDRIVE_API_KEY = os.getenv("GDRIVE_API_KEY", "")       # API key with Picker API enabled
+
 # --- Video ingest lifecycle ---------------------------------------------------
 # pending  = registered, waiting in our fair queue (not yet sent to Prefect)
 # queued   = the dispatcher picked it and scheduled a Prefect run
@@ -354,6 +366,24 @@ RERANK_WEIGHT = _float("RERANK_WEIGHT", 0.7)   # blend weight: rerank vs norm. R
 RERANK_API_KEY = _first_env("RERANK_API_KEY", "COHERE_API_KEY")
 RERANK_BASE_URL = os.getenv("RERANK_BASE_URL", "").strip()
 
+# --- Speaker diarization — "who said what" (Gemini) -------------------------------
+# Captions/ASR give the WHEN + WHAT; Gemini gives the WHO. It's OPT-IN PER VIDEO
+# (a checkbox at upload). Gemini WATCHES the video (YouTube URL directly; an upload
+# is pushed through the Gemini Files API) and returns a compact speaker-change
+# INDEX — not a re-transcript — which is aligned onto the verbatim cues, so each
+# transcript chunk (and each answer moment) carries the name of who said it, and
+# the answer can render a "Who said what" table.
+#
+# Video understanding is Gemini-ONLY, so this ALWAYS uses GEMINI_API_KEY regardless
+# of LLM_PROVIDER. If a video is flagged for diarization but the key is missing the
+# API rejects it up front ("Gemini key is missing"); DIARIZE_ENABLED=false, no key,
+# or any failure at ingest just leaves the transcript unlabeled (never fatal).
+GEMINI_API_KEY = _first_env("GEMINI_API_KEY", "GOOGLE_API_KEY")
+DIARIZE_ENABLED = _envbool("DIARIZE_ENABLED", True)   # master switch; the per-video flag still gates each run
+DIARIZE_MODEL = os.getenv("DIARIZE_MODEL", "gemini-2.5-flash").strip()
+DIARIZE_WINDOW_S = _int("DIARIZE_WINDOW_S", 600)      # video seconds per Gemini call
+DIARIZE_MAX_WORKERS = _int("DIARIZE_MAX_WORKERS", 6)  # windows diarized in parallel
+
 # --- YouTube download hardening ---------------------------------------------------
 # YouTube increasingly answers yt-dlp's default web client with "Sign in to
 # confirm you're not a bot". Mitigations, in order of reliability:
@@ -397,6 +427,12 @@ YT_REMOTE_COMPONENTS = [c.strip() for c in
 # (src/samples.py) if they aren't indexed yet — a fresh clone is queryable on
 # the / page without running anything by hand. Set false to skip.
 SEED_SAMPLE_VIDEOS = _envbool("SEED_SAMPLE_VIDEOS", True)
+# Deploy sanity check (src/preflight.py): on a DEPLOY (FLY_APP_NAME present, or
+# DEPLOY_ENV set) it warns when a LOCAL setting is present — STORAGE_PROVIDER=local,
+# a compose-only Qdrant/Postgres host, COMPOSE_PROFILES — which work locally but
+# break in production. false = warn loudly and keep running; true = refuse to
+# start / abort the deploy. No-op off a deploy, so local dev never sees it.
+STRICT_DEPLOY_CHECK = _envbool("STRICT_DEPLOY_CHECK", False)
 # Best-effort by default: if seeding can't finish (e.g. a fresh clone with no
 # YouTube cookies), the seed exits 0 and the deploy proceeds — the app goes live
 # and /demo just stays empty until the samples get indexed, instead of the whole

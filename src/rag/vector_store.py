@@ -263,7 +263,10 @@ def fetch_chunks(user_id: str, video_id: str) -> list[dict[str, Any]]:
         return []
     out = [{"text": p.payload.get("text", ""),
             "t_start": float(p.payload.get("t_start", 0.0)),
-            "t_end": float(p.payload.get("t_end", 0.0))}
+            "t_end": float(p.payload.get("t_end", 0.0)),
+            # who said it (diarization), when present — lets the synced transcript
+            # panel show speakers and keeps it in the durable transcript copy.
+            **({"speaker": p.payload["speaker"]} if p.payload.get("speaker") else {})}
            for p in points if p.payload and p.payload.get("text")]
     out.sort(key=lambda c: c["t_start"])
     return out

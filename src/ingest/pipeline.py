@@ -158,6 +158,15 @@ def t_transcript(video_id: str, user_id: str, path: str | None = None) -> int:
             cues, origin, empty_note = transcribe(path), "ASR", "no speech"
         else:
             return 0  # nothing to transcribe (e.g. upload with the scratch file gone)
+        # Speaker diarization ("who said what") — opt-in per video. Gemini labels
+        # who said each cue; failure/keyless just leaves the cues unlabeled.
+        if cues and row.get("diarize"):
+            from .diarize import diarize_cues
+            cues, speakers = diarize_cues(
+                cues, source=row.get("source"), url=row.get("url"), path=path,
+                video_id=video_id, title=row.get("title"))
+            if speakers:
+                print(f"[transcript] {video_id}: diarized speakers={speakers}")
         chunks = chunk_cues(cues)
         if not chunks:
             print(f"[transcript] {video_id}: {empty_note} — visual-only")
@@ -180,6 +189,7 @@ def t_transcript(video_id: str, user_id: str, path: str | None = None) -> int:
             {"user_id": user_id, "video_id": video_id, "modality": "text",
              "t_start": c["t_start"], "t_end": c["t_end"],
              "ms": int(c["t_start"] * 1000), "text": c["text"],
+             **({"speaker": c["speaker"]} if c.get("speaker") else {}),
              "embed_version": TEXT_EMBED_VERSION} for c in chunks])
         print(f"[transcript] {video_id}: indexed {len(chunks)} transcript chunks ({origin})")
         return len(chunks)

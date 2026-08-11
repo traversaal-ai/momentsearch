@@ -38,8 +38,13 @@ yt-dlp>=2026.7.4
 # text embeddings. It's also what the default text-embedding path uses.
 openai>=1.30
 #
+# google-genai powers BOTH the optional Gemini model providers AND speaker
+# recognition ("who said what" — src/ingest/diarize.py uses Gemini video
+# understanding), so it ships by default. It's still gated at runtime by
+# GEMINI_API_KEY + the per-video checkbox, so it costs nothing unless used.
+google-genai>=1.0     # LLM/IMAGE/TEXT_EMBED_PROVIDER=gemini + diarization
+#
 # Optional, one line per provider that has its own API:
-# google-genai>=1.0   # LLM_PROVIDER=gemini, IMAGE/TEXT_EMBED_PROVIDER=gemini
 # anthropic>=0.25     # LLM_PROVIDER=anthropic
 #
 # Jina, Cohere and Voyage need NOTHING installed — those adapters use plain

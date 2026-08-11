@@ -36,9 +36,12 @@
            class="h-5 w-auto opacity-85 group-hover:opacity-100 transition">
     </a>
 
+    <!-- No "Workspace →" pill up here. The hero's primary button below goes to
+         the same place, and two identical calls to action on one screen make you
+         wonder whether they differ. The other pages keep theirs — they have no
+         hero CTA. -->
     <a href="https://github.com/traversaal-ai/momentsearch"
        class="ml-auto text-xs text-muted hover:text-ink">GitHub ↗</a>
-    <a id="navAuth" href="/app" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-ink text-white hover:bg-black transition">Workspace →</a>
   </div>
 </header>
 
@@ -127,7 +130,9 @@
     return `<span class="word" style="--i:${i++}">${inner}</span>`;
   }).join(" ")).join(" ");
 
-  wireNav();   // header top-right → the workspace
+  // No wireNav() here: this page's header has no #navAuth link (the hero button
+  // is the way in). wireNav() is a no-op without one, but calling it would imply
+  // there's something to wire.
 </script>
 </body>
 </html>

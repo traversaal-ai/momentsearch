@@ -80,22 +80,39 @@ def fetch_transcript(url: str, video_id: str) -> list[dict]:
 
 
 def chunk_cues(cues: list[dict], chunk_seconds: float | None = None) -> list[dict]:
-    """Group cues into ~chunk_seconds passages, each with t_start/t_end."""
+    """Group cues into ~chunk_seconds passages, each with t_start/t_end.
+
+    Speaker-aware: when cues carry a `speaker` (diarization ran, src/ingest/
+    diarize.py), a chunk also breaks on a speaker change and is stamped with that
+    speaker, so every chunk is single-speaker. With no speakers it behaves exactly
+    as before (no `speaker` key)."""
     if not cues:
         return []
     span = chunk_seconds or config.TRANSCRIPT_CHUNK_SECONDS
     chunks: list[dict] = []
     buf: list[str] = []
     start: float | None = None
+    speaker: str | None = None
     last_end = cues[0]["t_end"]
+
+    def flush() -> None:
+        nonlocal buf, start, speaker
+        if buf and start is not None:
+            ch = {"text": " ".join(buf), "t_start": start, "t_end": last_end}
+            if speaker is not None:
+                ch["speaker"] = speaker
+            chunks.append(ch)
+        buf, start, speaker = [], None, None
+
     for c in cues:
+        cs = c.get("speaker")
+        if start is not None and speaker is not None and cs is not None and cs != speaker:
+            flush()                                    # speaker changed -> new chunk
         if start is None:
-            start = c["t_start"]
+            start, speaker = c["t_start"], cs
         buf.append(c["text"])
         last_end = c["t_end"]
         if last_end - start >= span:
-            chunks.append({"text": " ".join(buf), "t_start": start, "t_end": last_end})
-            buf, start = [], None
-    if buf and start is not None:
-        chunks.append({"text": " ".join(buf), "t_start": start, "t_end": last_end})
+            flush()
+    flush()
     return chunks

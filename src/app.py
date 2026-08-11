@@ -36,6 +36,8 @@ from .rag import vector_store
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from . import preflight
+    preflight.check("api")   # warn (or, if STRICT_DEPLOY_CHECK, abort) on local settings
     db.init_schema()
     # Create the Qdrant collection up front (known CLIP dims resolve without
     # loading the model) so a question before the first ingest returns
@@ -62,3 +64,19 @@ app.include_router(search_router)
 # ETag/Last-Modified revalidation for us.
 if UI_DIR.is_dir():
     app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
+
+
+@app.middleware("http")
+async def revalidate_ui(request, call_next):
+    """Never let a browser serve /ui from cache without asking us first.
+
+    There is no build step, so common.js keeps its name forever — and with only
+    ETag/Last-Modified, Chrome is free to reuse a stale copy heuristically. That
+    is how you get a page whose HTML is new and whose script is old: the page
+    calls a helper the cached script has never heard of and the whole thing dies
+    on a ReferenceError. `no-cache` still caches; it just requires the
+    revalidation that turns into a cheap 304."""
+    resp = await call_next(request)
+    if request.url.path.startswith("/ui/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp

@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import config, db, jobs, storage
-from ..samples import is_sample
+from ..samples import is_sample, sample_attribution
 from ..config import (
     ALLOWED_UPLOAD_TYPES,
     MAX_UPLOAD_MB,
@@ -73,6 +73,17 @@ def purge_video(video_id: str, uid: str) -> None:
     db.delete_video(video_id)
 
 
+_MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+
+def _too_big(size: int) -> HTTPException:
+    """Both numbers, always. The cap alone doesn't tell you whether to trim the
+    video or give up on it — the file's own size is what makes that decision."""
+    return HTTPException(
+        413,
+        f"{size / (1024 * 1024):,.0f} MB exceeds the {MAX_UPLOAD_MB} MB upload limit.")
+
+
 class PresignRequest(BaseModel):
     filename: str
     content_type: str
@@ -82,8 +93,8 @@ class PresignRequest(BaseModel):
 
 @router.post("/presign", dependencies=[Depends(require_auth)])
 def presign(req: PresignRequest, uid: str = Depends(user_id)):
-    if req.size > MAX_UPLOAD_MB * 1024 * 1024:
-        raise HTTPException(413, f"File exceeds the {MAX_UPLOAD_MB}MB limit.")
+    if req.size > _MAX_UPLOAD_BYTES:
+        raise _too_big(req.size)
     if not any(req.content_type.startswith(t) for t in ALLOWED_UPLOAD_TYPES):
         raise HTTPException(415, "Only video uploads are accepted.")
     # Fast path: the browser hashed the file and we already have that exact
@@ -122,10 +133,14 @@ async def upload_direct(video_id: str, key: str, request: Request,
     with dest.open("wb") as out:
         async for chunk in request.stream():
             size += len(chunk)
-            if size > MAX_UPLOAD_MB * 1024 * 1024:
+            if size > _MAX_UPLOAD_BYTES:
+                # Aborted mid-stream, so `size` is only "past the cap", not the
+                # file's real size — quote the cap alone rather than a figure
+                # that understates how far over it is.
                 out.close()
                 dest.unlink(missing_ok=True)
-                raise HTTPException(413, f"File exceeds the {MAX_UPLOAD_MB}MB limit.")
+                raise HTTPException(
+                    413, f"Upload exceeds the {MAX_UPLOAD_MB} MB limit.")
             out.write(chunk)
     return {"ok": True, "key": key, "size": size}
 
@@ -138,10 +153,17 @@ class RegisterRequest(BaseModel):
     key: str | None = None        # upload (from /presign)
     title: str | None = None
     session_id: str | None = None  # drop it straight into this session
+    speaker_recognition: bool = False  # "who said what" — Gemini diarization
 
 
 @router.post("", status_code=202, dependencies=[Depends(require_auth)])
 def register(req: RegisterRequest, uid: str = Depends(user_id)):
+    # Speaker recognition is Gemini-only: reject up front if the box is checked
+    # but no key is configured, so the user isn't surprised by an unlabeled video.
+    if req.speaker_recognition and not config.GEMINI_API_KEY:
+        raise HTTPException(
+            400, "Gemini key is missing — set GEMINI_API_KEY to use speaker recognition.")
+    diarize = bool(req.speaker_recognition)
     if req.url:
         m = _YT_RE.search(req.url)
         if not m:
@@ -158,7 +180,8 @@ def register(req: RegisterRequest, uid: str = Depends(user_id)):
             return {"video_id": video_id, "status": "indexed", "deduped": True}
         row = db.upsert_pending({"id": video_id, "user_id": uid, "source": "youtube",
                                  "url": req.url, "storage_key": None,
-                                 "source_hash": video_id, "title": req.title})
+                                 "source_hash": video_id, "title": req.title,
+                                 "diarize": diarize})
     elif req.video_id and req.key:
         # Never trust the client's key: it must be the one WE minted for them.
         if not req.key.startswith(storage.video_prefix(uid, req.video_id)):
@@ -166,13 +189,14 @@ def register(req: RegisterRequest, uid: str = Depends(user_id)):
         meta = storage.head(req.key)
         if meta is None:
             raise HTTPException(404, "Object not found — did the upload finish?")
-        if meta["size"] > MAX_UPLOAD_MB * 1024 * 1024:
+        if meta["size"] > _MAX_UPLOAD_BYTES:
             storage.delete_key(req.key)
-            raise HTTPException(413, f"Object exceeds the {MAX_UPLOAD_MB}MB limit.")
+            raise _too_big(meta["size"])
         title = req.title or Path(req.key).stem
         row = db.upsert_pending({"id": req.video_id, "user_id": uid, "source": "upload",
                                  "url": None, "storage_key": req.key,
-                                 "source_hash": None, "title": title})
+                                 "source_hash": None, "title": title,
+                                 "diarize": diarize})
     else:
         raise HTTPException(400, "Provide either url (YouTube) or video_id+key (upload).")
 
@@ -202,6 +226,9 @@ def _public(row: dict) -> dict:
     # Samples are protected: unselectable-yes, deletable-no. The UI hides the ✕
     # on these and the delete endpoint refuses them.
     out["is_sample"] = is_sample(row["id"])
+    # Creator credit — populated for the curated samples only (samples.py); None
+    # for anything a user added, since ingest doesn't record the uploader.
+    out.update(sample_attribution(row["id"]))
     return out
 
 

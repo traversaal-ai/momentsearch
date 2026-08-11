@@ -18,8 +18,11 @@ const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const USER_NAME="admin";
 
 /* ---------- top-nav affordance ----------
-   Every page's header carries one #navAuth link, so the top-right is the same
-   everywhere: it goes to the workspace. Call once after the header exists. */
+   The pages that need a way into the workspace carry one #navAuth link in the
+   header, so their top-right is identical. The landing page deliberately has
+   none — its hero button is the primary CTA and a second copy of it in the
+   header only raises the question of how they differ. Call once after the
+   header exists; harmless (a no-op) where there is no link. */
 function wireNav(){
   const a=$("#navAuth"); if(!a) return;
   a.href="/app"; a.textContent="Workspace →"; a.title="Open the workspace";
@@ -44,12 +47,46 @@ function mdInline(t){
   return t.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g,(_,g)=>g.split(/\s*,\s*/).map(n=>
     `<span class="cite" data-n="${n.trim()}" title="Play this moment">${n.trim()}</span>`).join(''));
 }
+/* Blocks: GFM tables (the "Who said what" table), ### headings, - bullets, and
+   paragraphs. Tables are the reason this exists — without them the answer's
+   `| Speaker | … |` rows render as literal-pipe paragraphs. */
 function renderMarkdown(md){
-  const lines=(md||"").split(/\n/); let html="",inUl=false;
+  const lines=(md||"").split(/\n/); let html="",inUl=false,i=0;
   const closeUl=()=>{if(inUl){html+="</ul>";inUl=false;}};
-  for(const raw of lines){ const l=raw.trim();
-    if(/^[-*]\s+/.test(l)){ if(!inUl){html+="<ul>";inUl=true;} html+=`<li>${mdInline(l.replace(/^[-*]\s+/,''))}</li>`; }
-    else { closeUl(); if(l) html+=`<p class="mb-3">${mdInline(l)}</p>`; } }
+  const isRow=s=>/^\|.*\|$/.test(s);
+  const cells=s=>s.replace(/^\||\|$/g,"").split("|").map(c=>c.trim());
+  const isSep=s=>isRow(s)&&cells(s).every(c=>/^:?-{2,}:?$/.test(c));
+  const nextNonBlank=k=>{ while(k<lines.length && lines[k].trim()==="") k++; return k; };
+  while(i<lines.length){
+    const l=(lines[i]||"").trim();
+    // GFM table: a header row whose next non-blank line is a `---` separator.
+    // Blank lines between rows are tolerated (models often emit them).
+    if(isRow(l)){
+      const sep=nextNonBlank(i+1);
+      if(sep<lines.length && isSep(lines[sep].trim())){
+        closeUl();
+        const head=cells(l); let body="",j=sep+1;
+        while(j<lines.length){
+          const jl=lines[j].trim();
+          if(jl===""){ j++; continue; }
+          if(!isRow(jl)) break;
+          body+=`<tr>${cells(jl).map(c=>`<td class="px-3 py-2 border-t border-line align-top">${mdInline(c)}</td>`).join("")}</tr>`;
+          j++;
+        }
+        html+=`<div class="overflow-x-auto my-4"><table class="w-full text-[13px] border border-line rounded-lg">`
+          +`<thead><tr class="bg-paper2">${head.map(c=>`<th class="px-3 py-2 text-left font-600">${mdInline(c)}</th>`).join("")}</tr></thead>`
+          +`<tbody>${body}</tbody></table></div>`;
+        i=j; continue;
+      }
+    }
+    // headings (### Who said what -> a modest subheading)
+    const h=l.match(/^#{1,6}\s+(.*)$/);
+    if(h){ closeUl(); html+=`<div class="display font-600 text-[15px] mt-5 mb-2">${mdInline(h[1])}</div>`; i++; continue; }
+    // bullets
+    if(/^[-*]\s+/.test(l)){ if(!inUl){html+="<ul>";inUl=true;} html+=`<li>${mdInline(l.replace(/^[-*]\s+/,''))}</li>`; i++; continue; }
+    // paragraph
+    closeUl(); if(l) html+=`<p class="mb-3">${mdInline(l)}</p>`; i++;
+  }
   closeUl(); return html;
 }
 
@@ -72,6 +109,16 @@ function thumbOf(c){
   // keeps a "said" upload moment from showing an empty box.
   return c.thumbnail || c.preview || (yid ? `https://img.youtube.com/vi/${yid}/hqdefault.jpg` : null);
 }
+/* A /api/videos row as something openMoment() can play: the video itself, from
+   0:00, with no matched moment attached. */
+function wholeVideo(v){
+  return {n:0, whole:true, video_id:v.id, title:v.title||v.id, url:v.url||"",
+          author:v.author||"", ms:0, timestamp:"0:00", deeplink:v.url||""};
+}
+/* "youtu.be/LPZh9BOjkQs" — a URL you can read at 12px. */
+function shortUrl(url){
+  return String(url||"").replace(/^https?:\/\//,"").replace(/^www\./,"").replace(/\/+$/,"");
+}
 function momentCard(c, i){
   const img=thumbOf(c);
   const thumb = img
@@ -79,6 +126,9 @@ function momentCard(c, i){
     : `<div class="w-full h-full flex items-center justify-center text-muted text-xs p-2 text-center">transcript moment<br>(no frame)</div>`;
   const quote = c.transcript
     ? `<div class="text-[11px] text-muted italic mt-1 line-clamp-2">“${esc(c.transcript)}”</div>` : "";
+  // Who said it (diarization), when present.
+  const spk = c.speaker
+    ? `<div class="text-[10px] font-600 text-coral2 mt-1 truncate">🎙 ${esc(c.speaker)}</div>` : "";
   return `
   <button class="source pop text-left bg-card border border-line rounded-2xl overflow-hidden shadow-sm hover:border-coral transition" data-n="${c.n}" style="--i:${i||0}">
     <div class="aspect-video bg-paper2 overflow-hidden">${thumb}</div>
@@ -90,6 +140,7 @@ function momentCard(c, i){
         <span class="text-[11px] text-muted ml-auto">score ${c.score}</span>
       </div>
       <div class="text-[12px] font-600 leading-snug line-clamp-2">${esc(c.title||c.video_id)}</div>
+      ${spk}
       ${quote}
     </div>
   </button>`;
@@ -158,18 +209,27 @@ async function loadTranscript(c, secs){             // GCP-only; no transcript -
   highlightAt(secs);
 }
 
+/* Same modal, same transcript sync, but opened on the video itself rather than a
+   retrieved moment — `whole:true` says so, and only the framing copy changes
+   (there is no "matched frame" when nothing was matched). Build one with
+   wholeVideo() below. */
 function openMoment(list, n){
   MODAL_LIST=list||[];
   const c=MODAL_LIST.find(x=>x.n===n); if(!c) return;
   const secs=Math.floor((c.ms||0)/1000);
   $("#mTitle").textContent=c.title||c.video_id;
-  $("#mMeta").textContent = c.transcript ? `“${c.transcript}”` : `Moment at ${c.timestamp}`;
+  $("#mMeta").textContent = c.whole
+    ? (c.author ? `By ${c.author} · playing from the start` : "Playing from the start")
+    : c.transcript ? `“${c.transcript}”` : `Moment at ${c.timestamp}`;
   const preview=thumbOf(c);
   $("#mFrame").style.display = preview ? "" : "none";
   if(preview) $("#mFrame").src=preview;
   const isFrame=!!c.thumbnail;
-  $("#mFrameLabel").textContent = isFrame ? "Matched frame" : "Matched on transcript";
-  $("#mFrameDesc").textContent = isFrame
+  $("#mFrameLabel").textContent = c.whole ? "The whole video"
+    : isFrame ? "Matched frame" : "Matched on transcript";
+  $("#mFrameDesc").textContent = c.whole
+    ? "Nothing was searched for yet — this is the source, playing from 0:00. The transcript beside it is click-to-jump."
+    : isFrame
     ? "This is what CLIP matched your question against — the still it judged closest to what you asked."
     : "This moment matched on what was said (transcript). The still is the video at that moment — press play to jump to the exact spot.";
   $("#mOut").href=c.deeplink||"#";

@@ -49,7 +49,7 @@ def _client(cfg: LLMConfig):
 def _content(question: str, moments: list[dict]) -> list[dict]:
     """Interleave the numbered labels with their frames, in moment order — the
     model has to know which image is [3]."""
-    content: list[dict] = [{"type": "text", "text": intro(question, len(moments))}]
+    content: list[dict] = [{"type": "text", "text": intro(question, moments)}]
     for i, m in enumerate(moments, 1):
         content.append({"type": "text", "text": label(i, m)})
         if m.get("image"):
