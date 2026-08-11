@@ -1,0 +1,74 @@
+# Fly.io — SLIM app deploy (api + worker only). CLIP runs ELSEWHERE.
+#
+# Use this instead of fly.toml when you run the CLIP service on its own box.
+# Fly has NO GPUs (deprecated Jul 31 2026), so that box is an EXTERNAL GPU host
+# (Modal / RunPod / a GPU VM) built from Dockerfile.clip. This app is built SLIM
+# (no torch / no local model) and reaches CLIP over EMBED_SERVICE_URL.
+#
+#   fly launch --no-deploy --copy-config -c fly.slim.toml   # name a NEW app
+#   fly secrets import   < your .env (as in fly.toml's header)
+#   fly secrets set EMBED_SERVICE_URL=https://YOUR-CLIP-HOST:8001
+#   fly secrets set EMBED_SERVICE_TOKEN=<same token as the clip service>   # if public
+#   fly secrets set SEED_SAMPLE_VIDEOS=false        # slim can't seed in-process
+#   fly deploy --ha=false -c fly.slim.toml
+#
+# The DEFAULT (fat, all-in-one) deploy is still `fly deploy` with fly.toml —
+# this file is only for the split. See README "Split / GPU deployment".
+
+app = 'CHANGE-ME-slim'          # a DIFFERENT app name from your fat deploy
+primary_region = 'iad'
+
+[build]
+  # SLIM: omit the torch/CLIP stack. This app has NO local model and MUST reach
+  # a CLIP service via EMBED_SERVICE_URL (set as a secret, below).
+  [build.args]
+    WITH_TORCH = "false"
+
+[deploy]
+  # Seed against the REMOTE clip (no in-process force — slim has no model). It's
+  # best-effort (SEED_STRICT=false), so if CLIP isn't reachable at release time
+  # the deploy still proceeds with an empty /demo. Simplest is to skip seeding:
+  #   fly secrets set SEED_SAMPLE_VIDEOS=false
+  release_command = "python -m src.seed"
+  release_command_timeout = "12m"
+
+[processes]
+  api = 'uvicorn src.app:app --host 0.0.0.0 --port 8000'
+  worker = 'python -m src.worker'
+  # NO clip process here — CLIP lives in its own app/host (EMBED_SERVICE_URL).
+
+[env]
+  # REQUIRED: without a reachable CLIP the slim app can't index or search. Set
+  # the real value as a secret (`fly secrets set EMBED_SERVICE_URL=...`) rather
+  # than editing this line; leaving it unset makes config.py derive a clip
+  # address that doesn't exist in this app. If the CLIP host is public, also set
+  # EMBED_SERVICE_TOKEN (same value as the clip service) and use https://.
+  EMBED_SERVICE_URL = "https://YOUR-GPU-CLIP-HOST"
+
+[[restart]]
+  policy = 'always'
+  retries = 10
+  processes = ['worker']
+
+[[restart]]
+  policy = 'on-failure'
+  retries = 10
+  processes = ['api']
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['api']
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'        # embedding is remote — api stays thin
+  processes = ['api']
+
+[[vm]]
+  size = 'shared-cpu-2x'
+  memory = '2gb'          # download + ffmpeg; embedding is remote
+  processes = ['worker']

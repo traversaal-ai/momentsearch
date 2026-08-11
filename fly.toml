@@ -13,7 +13,18 @@
 app = 'momentsearch'
 primary_region = 'iad'
 
+# Builds the FAT app image (Dockerfile, WITH_TORCH=true): api + worker + clip all
+# run from it and the release_command seed embeds in-process. This is the default
+# all-on-Fly (CPU) deploy — unchanged, and what everything below assumes.
+#
+# SLIM / GPU split: Fly has NO GPUs (deprecated Jul 31 2026), so a GPU CLIP runs
+# on an EXTERNAL host (Modal / RunPod / a GPU VM), built from Dockerfile.clip.
+# Then deploy just api + worker here, built slim, pointed at that host:
+#   fly deploy -c fly.slim.toml    # api + worker, slim, EMBED_SERVICE_URL -> external clip
+# This fly.toml stays the DEFAULT fat all-in-one (CPU). See README "Split / GPU deployment".
 [build]
+  [build.args]
+    WITH_TORCH = "true"
 
 [deploy]
   # Startup gate: index the sample talk BEFORE the new version goes live —

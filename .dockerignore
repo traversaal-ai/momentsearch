@@ -13,7 +13,8 @@
 # pattern meant to apply at any depth needs the `**/` prefix. Patterns without
 # it below are deliberately root-anchored (data/, .git/, fly.toml, ...).
 #
-# Deliberately NOT ignored: requirements.txt, src/, ui/.
+# Deliberately NOT ignored: requirements.txt, requirements-clip.txt (the torch
+# stack the fat app image and Dockerfile.clip install), src/, ui/.
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 # Never in a build context. Runtime config arrives as env vars / Fly secrets;
@@ -72,9 +73,9 @@ benchmark/
 
 # ── Host-side deploy configs ──────────────────────────────────────────────────
 # Read by flyctl / docker compose on the HOST; the container never sees them.
-# (Dockerfile and .dockerignore are intentionally NOT listed — the builder
-# needs them, and excluding them buys nothing.)
-fly.toml
+# (Dockerfile, Dockerfile.clip and .dockerignore are intentionally NOT listed —
+# the builder needs them, and excluding them buys nothing.)
+fly*.toml
 docker-compose*.yml
 
 # ── Editor and OS ─────────────────────────────────────────────────────────────

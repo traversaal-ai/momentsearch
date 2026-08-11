@@ -27,13 +27,22 @@ def _url(path: str) -> str:
     return config.EMBED_SERVICE_URL + path
 
 
+def _headers() -> dict:
+    h = {"Content-Type": "application/json"}
+    # Sent only when EMBED_SERVICE_TOKEN is set — matches the clip service's
+    # optional bearer check (src/clip_service.py). No token = no header, i.e.
+    # today's open Fly-internal behavior.
+    if config.EMBED_SERVICE_TOKEN:
+        h["Authorization"] = f"Bearer {config.EMBED_SERVICE_TOKEN}"
+    return h
+
+
 def post(path: str, payload: dict, timeout: int = 600) -> dict:
     body = json.dumps(payload).encode()
     last: Exception | None = None
     for _ in range(12):  # up to ~60s of patience for a cold service
         try:
-            req = urllib.request.Request(
-                _url(path), data=body, headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(_url(path), data=body, headers=_headers())
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read())
         except urllib.error.URLError as exc:

@@ -550,7 +550,9 @@ function renderScopeNote(){
 function renderStarters(){
   const box=$("#starters");
   if(SHOWN || !ready().length){ box.innerHTML=""; return; }
-  const S=["What is this about?","Show me a diagram","What's on the busiest slide?"];
+  // First one is the safe opener: it works on ANY video, so a first-time user's
+  // first click can't come back empty.
+  const S=["What is this video about?","Show me a diagram","What's on the busiest slide?"];
   box.innerHTML=S.map(s=>`<span class="chip">${esc(s)}</span>`).join("");
   $$("#starters .chip").forEach(c=>c.onclick=()=>{ qEl.value=c.textContent; ghostSync(); send(); });
 }
@@ -576,6 +578,17 @@ const STAGE_WORDS={
   answering: "Writing the answer with citations",
 };
 let ASK_STAGES=[];          // [{key, label, detail, ms}] in the order they arrived
+
+/* The question, echoed the moment you press enter and left in place through the
+   wait, the answer and any error — identical markup in all three, so nothing
+   shifts or restyles under you. Without it the progress list is a machine
+   talking about a question you can no longer see. */
+function askedBlock(q){
+  return `<div class="flex items-baseline gap-2 mb-4">
+    <span class="text-[10px] uppercase tracking-wider text-muted font-semibold shrink-0">You asked</span>
+    <span class="text-[14.5px] font-600 display">${esc(q)}</span>
+  </div>`;
+}
 
 function renderStages(done){
   const box=$("#stages"); if(!box) return;
@@ -659,7 +672,7 @@ async function send(){
   ASK_STAGES=[];
   $("#answer").innerHTML=`
     <div class="ans max-w-3xl mx-auto pt-2">
-      <div class="text-[13px] text-muted mb-4">${esc(q)}</div>
+      ${askedBlock(q)}
       <div id="stages" class="bg-card border border-line rounded-2xl p-4 space-y-2.5 mb-5"></div>
       <div class="space-y-3">
         <div class="shimmer h-4 w-2/3 rounded"></div>
@@ -676,7 +689,7 @@ async function send(){
     // come back as prose with a fix in it — give it room to be read.
     SHOWN=null;
     $("#answer").innerHTML=`<div class="ans max-w-3xl mx-auto pt-2">
-      <div class="text-[13px] text-muted mb-3">${esc(q)}</div>
+      ${askedBlock(q)}
       <div class="bg-[#fbf2d8] border border-[#e7c46a] rounded-2xl p-4">
         <div class="text-[13px] font-600 text-[#8a6d1a] mb-1">Couldn't answer that</div>
         <p class="text-[13px] text-[#6b5a1a] leading-relaxed">${esc(e.message)}</p>
@@ -695,10 +708,7 @@ function renderAnswer(){
   const m=SHOWN.message, cites=m.citations||[], note=(m.meta||{}).note;
   $("#answer").innerHTML=`
     <div class="ans max-w-3xl mx-auto pt-2">
-      <div class="flex items-baseline gap-2 mb-4">
-        <span class="text-[10px] uppercase tracking-wider text-muted font-semibold shrink-0">You asked</span>
-        <span class="text-[13.5px] font-600">${esc(SHOWN.q)}</span>
-      </div>
+      ${askedBlock(SHOWN.q)}
       <div class="prose-body text-[15px]">${renderMarkdown(m.content)}</div>
       ${note?`<p class="text-[11px] text-muted mt-2">${esc(note)}</p>`:""}
       ${cites.length?`

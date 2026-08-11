@@ -30,11 +30,24 @@ from __future__ import annotations
 import base64
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from . import config
 from .providers import embed
+
+
+def require_token(authorization: str | None = Header(default=None)) -> None:
+    """Gate the /embed routes with a bearer token WHEN EMBED_SERVICE_TOKEN is set.
+
+    Unset (the default) leaves the service open — correct for Fly's private
+    *.internal networking and docker-compose, where nothing external can reach
+    it. Set it when the clip service is exposed across a non-private network
+    (a GPU host elsewhere); the app sends the same token (src/providers/embed/
+    remote.py). /healthz stays open so load balancers can probe it."""
+    token = config.EMBED_SERVICE_TOKEN
+    if token and authorization != f"Bearer {token}":
+        raise HTTPException(401, "Invalid or missing embedding-service token.")
 
 
 @asynccontextmanager
@@ -95,24 +108,24 @@ def healthz():
     }
 
 
-@app.post("/embed/images")
+@app.post("/embed/images", dependencies=[Depends(require_token)])
 def embed_images(req: ImagesRequest):
     jpegs = [base64.b64decode(j) for j in req.jpegs_b64]
     return {"vectors": embed.embed_jpegs_local(jpegs).tolist()}
 
 
-@app.post("/embed/text")
+@app.post("/embed/text", dependencies=[Depends(require_token)])
 def embed_text(req: TextRequest):
     return {"vector": embed.embed_text_local(req.text).tolist()}
 
 
 # ── Transcript branch ────────────────────────────────────────────────────────
 
-@app.post("/embed/docs")
+@app.post("/embed/docs", dependencies=[Depends(require_token)])
 def embed_docs(req: DocsRequest):
     return {"vectors": embed.embed_docs_local(req.texts).tolist()}
 
 
-@app.post("/embed/query")
+@app.post("/embed/query", dependencies=[Depends(require_token)])
 def embed_query(req: TextRequest):
     return {"vector": embed.embed_query_local(req.text).tolist()}

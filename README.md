@@ -2,11 +2,11 @@
 
 **Ask questions about your videos and get answers grounded in the exact moments — by what's _seen_ on screen, and what's _said_ in the transcript (YouTube captions, or Whisper on your own uploads).**
 
-🌐 **Live app:** [momentsearch.fly.dev](https://momentsearch.fly.dev/get-started)
+🌐 **Live app:** [momentsearch.fly.dev](https://momentsearch.fly.dev/)
 
 MomentSearch is an open-source, production-shaped stack for **visual** video
-search and RAG. Users upload videos (or paste YouTube URLs); background workers
-sample keyframes, dedup them, embed them and index them per-user in
+search and RAG. You upload videos (or paste YouTube URLs); background workers
+sample keyframes, dedup them, embed them and index them in
 [Qdrant](https://qdrant.tech). Ask a question and it retrieves the most
 relevant moments and (optionally) has **your own vision LLM** read those
 frames and write a cited answer — or honestly abstain when the evidence isn't
@@ -25,12 +25,12 @@ hosted, or any mix.
 - 🎥 **Presigned uploads** — the browser PUTs straight to object storage; gigabytes never flow through the API
 - ⚙️ **Queue + stateless workers** — the API answers `202` instantly; Prefect-orchestrated workers do the heavy lifting
 - 🔍 **Visual retrieval** — CLIP embeddings, runs locally, no API key needed for the visual branch
-- 👥 **Multi-tenant & private** — every bucket key, Postgres row and Qdrant point is `user_id`-tagged and filtered
+- 🔑 **Single-user, no sign-in** — opening the app *is* being logged in as the one account (`admin`). **No authentication exists**: whoever reaches the port owns it, so bind it to localhost or put an authenticating proxy in front. The data model underneath is still fully `user_id`-tagged (bucket keys, Postgres rows, Qdrant points), so restoring real multi-user auth means resolving a per-request user id again — not reshaping data
 - 🛡️ **Confidence gate** — below-threshold retrievals abstain *before* the LLM is ever called
 - 💬 **Cited answers** — bring your own vision LLM: **Gemini, OpenAI, Claude, Grok, OpenRouter, Groq, Together, Mistral, NVIDIA, Azure, Ollama/vLLM** — a provider name plus a key is the whole configuration ([Pluggable models](#pluggable-models-llms-and-embeddings))
 - 🔌 **Swappable embeddings, both modalities** — frames via local **CLIP** (default `clip-ViT-L-14`, free) or hosted **Jina CLIP v2 / Cohere Embed v4 / Voyage multimodal / Gemini**; transcripts via **OpenAI `text-embedding-3-small`** (default) or **bge/fastembed (local, keyless) / Gemini / Cohere / Voyage / Jina**. Mix them — the branches fuse by rank, not score
 - 🩺 **`python -m src.providers`** — one command tells you what your `.env` resolved to, which key it used, and what's missing
-- 🏠 **Per-user models** — each tenant can plug in a model *they* host (vLLM, Ollama, any OpenAI-compatible endpoint) and their answers run on it
+- 🏠 **Bring your own model** — attach a model *you* host (vLLM, Ollama, any OpenAI-compatible endpoint) via `PUT /api/llm` and answers run on it, overriding the server default
 - 🧩 **Multimodal fusion** — a transcript branch (YouTube captions or Whisper on uploads) runs alongside the visual one and a **rank-based scoring module** (RRF + time-windows + cross-modal boost, then a local cross-encoder **reranker** on by default) fuses them; "find where they *talk about* X" works even when the screen doesn't show it
 - 🔓 **Apache 2.0**
 
@@ -117,22 +117,46 @@ only build/config files.
 ```bash
 git clone https://github.com/traversaal-ai/momentsearch.git
 cd momentsearch
-cp .env.example .env    # fill in the cloud creds: DATABASE_URL, QDRANT_URL/KEY,
-                        # PREFECT_API_URL/KEY, OPENAI_API_KEY
-                        # (STORAGE_PROVIDER=local works out of the box — no bucket;
-                        #  Qdrant can run local too — see "Run storage and Qdrant locally";
-                        #  ADMIN_TOKEN optional — set it on public deploys)
+cp .env.example .env          # cloud reference (all providers/options)
+# ...or, to run LOCAL & keyless (local storage + local Qdrant + local models):
+# cp .env.local.example .env
 docker compose up --build
 # API + UI:       http://localhost:8000
 # Queue/run view: https://app.prefect.cloud → Runs
 ```
 
-Two pages, one app:
+**What you must fill in before `up` will work.** Compose starts four services —
+`clip`, `seed`, `api`, `worker` — and **none of them is a database.** Three
+things are rented and have no local default:
+
+| `.env` key | Needed for | Local alternative |
+|---|---|---|
+| `DATABASE_URL` | the video manifest ([Neon](https://neon.tech)) | any Postgres you can reach |
+| `PREFECT_API_URL` + `PREFECT_API_KEY` | the ingest queue ([Prefect Cloud](https://app.prefect.cloud), free tier) | a self-hosted `prefect server` |
+| `QDRANT_URL` + `QDRANT_API_KEY` | the vector index ([Qdrant Cloud](https://cloud.qdrant.io)) | set `COMPOSE_PROFILES=local-qdrant` and `QDRANT_URL=http://qdrant:6333` in `.env` — compose auto-starts a local Qdrant |
+
+> ⚠️ **A vector store is required** — a plain `cp .env.example .env && docker
+> compose up` has **no Qdrant** and both ingest and search fail. Either point
+> `QDRANT_URL` at Qdrant Cloud, **or** add two lines to `.env` —
+> `COMPOSE_PROFILES=local-qdrant` and `QDRANT_URL=http://qdrant:6333` — and compose
+> starts a local Qdrant on its own (see
+> [Run storage and Qdrant locally](#run-storage-and-qdrant-locally-no-cloud-bucket-or-vector-store)).
+
+Optional: `STORAGE_PROVIDER=local` is the default and needs no bucket. An LLM key
+is optional too — without one, retrieval still returns ranked, clickable moments
+and the answer degrades to an honest similarity summary (the UI badge reads
+"No LLM — moments only").
+
+Three pages, one app — **no sign-in on any of them**:
 
 | Page | What it is |
 |---|---|
-| **`/`** | **Sample project — "A Deep Dive into LLMs."** One LLM talk, pre-indexed, read-only. |
-| **`/get-started`** | **Bring your own videos.** Add a YouTube URL or upload a file, then ask. |
+| **`/`** | Landing page — what it is, and the way in. |
+| **`/demo`** | The pre-indexed sample corpus, read-only. Nothing is saved. |
+| **`/app`** | The workspace: **1** add videos → **2** watch them process → **3** ask. Sessions keep separate folders of videos. |
+
+`/signin` and `/get-started` are kept as `307` redirects to `/app` so old links
+and bookmarks still resolve.
 
 **The sample corpus is a startup step.** A one-shot `seed` service indexes the
 sample talk before `api`/`worker` start — so when `http://localhost:8000` first
@@ -167,9 +191,10 @@ Both read their location from env, so this is config, not code:
 - **Storage → local:** set `STORAGE_PROVIDER=local`. Uploads, frames and
   transcripts land under `./data` and the API serves them itself — no bucket, no
   keys. Works out of the box.
-- **Qdrant → local:** uncomment the `qdrant` service in `docker-compose.yml`,
-  then in `.env` set `QDRANT_URL=http://qdrant:6333` and leave `QDRANT_API_KEY`
-  blank. Vectors persist under `./data/qdrant`, shared by api + worker. (Blank
+- **Qdrant → local:** add two lines to `.env` — `COMPOSE_PROFILES=local-qdrant`
+  and `QDRANT_URL=http://qdrant:6333` (leave `QDRANT_API_KEY` blank). That's it:
+  `docker compose up` **auto-starts** the Qdrant service (nothing to uncomment).
+  Vectors persist under `./data/qdrant`, shared by api + worker. (Blank
   `QDRANT_URL` instead gives an *embedded* Qdrant, but that's single-process
   only — fine for `examples/quickstart.py`, not the full api+worker app.)
 
@@ -179,10 +204,63 @@ leaves only the manifest DB (**Postgres**, `DATABASE_URL`) and the job queue
 (**Prefect**, `PREFECT_API_URL`) pointing at the cloud — both are env-driven, so
 a local Postgres + a self-hosted `prefect server` would complete an offline stack.
 
+### Split / GPU deployment (CLIP on a GPU, app on CPU)
+
+By default it's **one image** on CPU — the app embeds in-process, nothing extra
+to run. When embedding is your bottleneck, split it: put **CLIP on a GPU box**
+and keep the **app on cheap CPU** (Fly), wired only by `EMBED_SERVICE_URL`. The
+code already treats *embedding as a URL*, so no code changes — just two images:
+
+| Image | Build | Runs |
+|---|---|---|
+| **App (slim)** | `docker build --build-arg WITH_TORCH=false -t momentsearch-app .` | api + worker — **no local model**, ~hundreds of MB smaller |
+| **CLIP (GPU)** | `docker build -f Dockerfile.clip --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121 -t momentsearch-clip:gpu .` | the CLIP service on a GPU host (`docker run --gpus all -p 8001:8001 …`) |
+
+> ⚠️ **A slim app image has NO CLIP inside it — you MUST run a CLIP service and
+> point the app at it, or the app cannot index or search.** Concretely:
+>
+> 1. **Deploy the CLIP image first** (Dockerfile.clip) on your GPU host — note its
+>    address, e.g. `https://my-gpu-host:8001`.
+> 2. On the app, set **`EMBED_SERVICE_URL=https://my-gpu-host:8001`**.
+> 3. If that host is reachable over the public internet, set the **same
+>    `EMBED_SERVICE_TOKEN`** on *both* the app and the CLIP service (so `/embed`
+>    requires a bearer token), and put the CLIP service **behind HTTPS** (the
+>    token authenticates but doesn't encrypt).
+>
+> **If you run a slim app with no reachable CLIP service**, every upload fails to
+> index and every search errors with a clear message telling you to point
+> `EMBED_SERVICE_URL` at a clip service. Videos that failed while CLIP was down
+> aren't lost — **retry them** once CLIP is up. The slim app and a running CLIP
+> service are a **pair**: deploy them together.
+>
+> **Seeding on a slim deploy:** the sample-corpus seed can't embed in-process
+> (no local model), so it seeds *against the CLIP service* — make sure CLIP is
+> reachable at seed time, or set `SEED_SAMPLE_VIDEOS=false`. Seeding is
+> best-effort, so a missing CLIP at seed time won't abort the deploy (see
+> `SEED_STRICT`).
+
+**On Fly:** Fly has **no GPUs** (deprecated Jul 31 2026), so the GPU CLIP runs on
+an **external host** (Modal / RunPod / a GPU VM) built from `Dockerfile.clip`;
+Fly runs only the slim app pointed at it. The default `fly deploy` (fat,
+all-in-one, CPU) is untouched.
+
+```bash
+# 1) build & deploy Dockerfile.clip on your GPU host (see its header) -> a URL + token
+# 2) then, the slim app on Fly:
+fly deploy -c fly.slim.toml    # api + worker, built slim, EMBED_SERVICE_URL -> the GPU host
+```
+
+`fly.slim.toml` carries a `CHANGE-ME-slim` app name and inline setup steps
+(secrets, `EMBED_SERVICE_URL`, `EMBED_SERVICE_TOKEN`, `SEED_SAMPLE_VIDEOS=false`);
+fill those in before deploying.
+
+Prefer the **fat image** (the default) unless you specifically want CLIP on a
+GPU — it's one image, one deploy, embeds itself, and has none of the above wiring.
+
 ## The write path — upload to searchable vectors
 
 1. **Presign** — `POST /api/videos/presign {filename, content_type, size}`
-   (Bearer auth when `ADMIN_TOKEN` is set). The server picks the key
+   (no auth — see [API](#api)). The server picks the key
    (`{user}/{video}/source.{ext}` — everything for a video lives under
    `{user}/{video}/`; never trusted from the client), caps size and type, and returns a time-limited
    PUT URL. With `STORAGE_PROVIDER=local` it returns a direct-upload URL
@@ -264,6 +342,15 @@ Poll `GET /api/videos` (or watch the UI chips) until `indexed`.
 5. **Answer** — clickable thumbnails + timestamps (presigned GETs straight from
    the bucket). Every timestamp is read from the winning hit's payload — the LLM
    never invents one — or the honest refusal.
+
+**Watching it happen.** `POST /api/sessions/{id}/ask_stream` reports each of those
+stages over Server-Sent Events as it *begins* — `embedding → searching → ranking →
+reading → answering` — which is what the workspace UI draws while you wait, with
+the real elapsed time per stage. The events come from actual pipeline boundaries
+(`on_stage` in [src/rag/search.py](src/rag/search.py)), not a timer, so a slow
+stage visibly sits there instead of a progress bar lying to you. It doubles as a
+profiler: on this stack a warm question is roughly *embedding 50ms · Qdrant 350ms ·
+rerank ~1s · frame fetches ~1s · LLM 5-7s*.
 
 The cost fact that drives this shape: retrieval is ~10-30ms; the multimodal
 LLM call is seconds and dominates cost. Optimize there — few moments,
@@ -420,47 +507,44 @@ convenient and silent), and flags the single most confusing misconfiguration: a
 leftover generic `LLM_API_KEY` from another provider shadowing the
 provider-specific one.
 
-## Bring your own model (per user)
+## Bring your own model
 
-Which model writes the answer is resolved **per tenant**, in this order:
+Which model writes the answer is resolved in this order:
 
-1. **The user's own model** — saved via `PUT /api/llm` (**backend-only — not
-   exposed in the UI**): any provider from the table above with their own key, or
-   their own **vLLM** / Ollama / LM Studio endpoint via `base_url`. The model must
-   be **vision-capable** — it is shown the actual frames (e.g.
+1. **An attached model** — saved via `PUT /api/llm` (**backend-only — not exposed
+   in the UI**): any provider from the table above with its own key, or your own
+   **vLLM** / Ollama / LM Studio endpoint via `base_url`. The model must be
+   **vision-capable** — it is shown the actual frames (e.g.
    `Qwen/Qwen2.5-VL-7B-Instruct` on vLLM). `GET /api/providers` lists the choices;
    the UI only shows a read-only badge of which model is active — there's no
-   model-settings form. Only the *LLM* is per-tenant: embeddings live in shared
-   collections, so their dimension can't vary by user.
-2. **The server default** — the `LLM_*` env config, used when the user hasn't
-   attached one.
-3. **No model** — retrieval still works; answers degrade to honest
-   visual-similarity summaries.
+   model-settings form. Only the *LLM* is switchable this way: embeddings live in
+   shared collections, so their dimension can't vary per request.
+2. **The server default** — the `LLM_*` env config, used when nothing is attached.
+3. **No model** — retrieval still works; the answer degrades to an honest
+   visual-similarity summary and `llm_used: false` (verified: you still get ranked
+   moments with thumbnails, timestamps and clickable citations).
 
 ```bash
 # what can I attach?
 curl localhost:8000/api/providers
 
-# attach your own hosted vLLM
-# (drop the Authorization header when ADMIN_TOKEN is unset — the dev default)
-curl -X PUT localhost:8000/api/llm \
-  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+# attach your own hosted vLLM  (no auth header — the API is unauthenticated)
+curl -X PUT localhost:8000/api/llm -H "Content-Type: application/json" \
   -d '{"provider":"openai","model":"Qwen/Qwen2.5-VL-7B-Instruct",
        "base_url":"http://my-vllm-host:8000/v1"}'
 
 # or a hosted provider — model is optional, the preset knows its default
-curl -X PUT localhost:8000/api/llm \
-  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+curl -X PUT localhost:8000/api/llm -H "Content-Type: application/json" \
   -d '{"provider":"grok","api_key":"xai-..."}'
 
-curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" localhost:8000/api/llm/test
+curl -X POST localhost:8000/api/llm/test
 #  -> sends one tiny image through your model; fails fast if it isn't vision-capable
 
-curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" localhost:8000/api/llm
+curl -X DELETE localhost:8000/api/llm
 #  -> back to the server default
 ```
 
-Settings live in Postgres (`ms_user_llms`, one row per user); API keys are
+Settings live in Postgres (`ms_user_llms`, keyed by tenant — one row here); API keys are
 write-only (masked on read, blank on update keeps the stored key). Bad configs
 are rejected at `PUT` time with the fix named ("no API key. Set XAI_API_KEY"),
 not at answer time. `/api/ask`
@@ -538,9 +622,6 @@ multimodal LLM call is seconds**, so the funnel spends its cheap budget widely
 (both branches, always) and its expensive budget narrowly (a handful of gated,
 downscaled moments). Each box below scales on its own bottleneck, independently —
 that's the whole point of splitting the four processes out:
-
-| Component | Scales by | Because its bottleneck is… | How |
-|---|---|---|---|
 
 | Component | Scales by | Because its bottleneck is… | How |
 |---|---|---|---|
@@ -623,14 +704,15 @@ fly deploy --ha=false                         # build image, start api/worker/cl
 fly scale count worker=2                      # more ingest throughput, anytime
 ```
 
-On every deploy, fly.toml's `release_command` runs the **seed gate** first
-(`python -m src.seed`); if the sample can't be indexed the deploy aborts
-and the previous version keeps serving. The API machine auto-stops when idle;
-worker + clip stay up (scale both to 0 between ingest sessions — queued runs
-just wait). Set a CORS rule on the bucket for your site's origin (see
-`.env.example`) or browser uploads fail. Need GPU-speed embedding later? Run
-the same clip container on a GPU machine and point `CLIP_SERVICE_URL` at it —
-nothing else changes.
+On every deploy, fly.toml's `release_command` runs the **seed step** first
+(`python -m src.seed`). It's **best-effort by default** (`SEED_STRICT=false`): if
+the sample can't be indexed the deploy still goes live with an empty `/demo`. Set
+`SEED_STRICT=true` to make an incomplete seed abort the deploy (the previous
+version keeps serving). The API machine auto-stops when idle; worker + clip stay
+up (scale both to 0 between ingest sessions — queued runs just wait). Set a CORS
+rule on the bucket for your site's origin (see `.env.example`) or browser uploads
+fail. Need GPU-speed embedding later? Run the CLIP service (`Dockerfile.clip`) on
+an external GPU host and point `EMBED_SERVICE_URL` at it — nothing else changes.
 
 ### Continuous deployment (GitHub Actions)
 
@@ -645,33 +727,32 @@ fly tokens create deploy -x 999999h
 
 ## API
 
-Auth is **optional**: with `ADMIN_TOKEN` unset (the local-dev default) no
-endpoint needs a header — drop the `Authorization` lines below. Set it on any
-public deploy and mutating endpoints start requiring it. The tenant is the
-`X-User-Id` header (default `default`); swap in real per-user auth later —
-the data model is already tenant-scoped everywhere.
+> ⚠️ **There is no authentication.** Every endpoint below is open, mutating ones
+> included. `ADMIN_TOKEN` is **no longer enforced** — setting it changes nothing
+> (`require_auth()` in [src/api/videos.py](src/api/videos.py) is a deliberate
+> no-op, kept as the single place to restore a check). `X-User-Id` and
+> `Authorization` are **ignored**, not honoured, so a stale header can't steer
+> reads or writes. Every request acts as `SINGLE_USER_ID` (default `default`).
+> Bind this to localhost, or put an authenticating proxy in front of it.
 
 ```bash
 # 1) presign
-curl -X POST localhost:8000/api/videos/presign \
-  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+curl -X POST localhost:8000/api/videos/presign -H "Content-Type: application/json" \
   -d '{"filename":"demo.mp4","content_type":"video/mp4","size":123456789}'
 # 2) PUT the file to the returned url, then 3) register:
-curl -X POST localhost:8000/api/videos \
-  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+curl -X POST localhost:8000/api/videos -H "Content-Type: application/json" \
   -d '{"video_id":"up_ab12cd34ef","key":"default/up_ab12cd34ef/source.mp4","title":"Demo"}'
 
-# YouTube instead:
-curl -X POST localhost:8000/api/videos \
-  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+# YouTube instead (session_id is optional — it drops the video into that session):
+curl -X POST localhost:8000/api/videos -H "Content-Type: application/json" \
   -d '{"url":"https://youtu.be/VIDEO_ID"}'
 
 # status / retry / delete
 curl localhost:8000/api/videos
-curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" localhost:8000/api/videos/up_ab12cd34ef/retry
-curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" localhost:8000/api/videos/up_ab12cd34ef
+curl -X POST localhost:8000/api/videos/up_ab12cd34ef/retry
+curl -X DELETE localhost:8000/api/videos/up_ab12cd34ef      # purges vectors + files + row
 
-# ask
+# ask across everything indexed
 curl -X POST localhost:8000/api/ask -H "Content-Type: application/json" \
   -d '{"question":"a diagram of the attention mechanism"}'
 
@@ -679,8 +760,37 @@ curl -X POST localhost:8000/api/ask -H "Content-Type: application/json" \
 curl localhost:8000/api/providers
 ```
 
-Public: `GET /` (sample UI) · `GET /get-started` · `GET /api/config` ·
-`GET /api/providers` · `GET /api/health`.
+**Sessions** — a session is one folder of videos plus the answers asked of it.
+This is what the workspace UI drives:
+
+```bash
+curl localhost:8000/api/sessions                       # list (bootstraps first run)
+curl -X POST localhost:8000/api/sessions -H "Content-Type: application/json" \
+  -d '{"title":"My first search"}'                     # new, EMPTY session
+curl localhost:8000/api/sessions/s_ab12                # session + videos + messages
+curl -X PATCH  localhost:8000/api/sessions/s_ab12 -H "Content-Type: application/json" \
+  -d '{"title":"Renamed"}'
+curl -X DELETE localhost:8000/api/sessions/s_ab12      # + purges videos no other session holds
+
+# ask, scoped to THIS session's indexed videos
+curl -X POST localhost:8000/api/sessions/s_ab12/ask -H "Content-Type: application/json" \
+  -d '{"question":"what is tokenization?","video_ids":["yt_LPZh9BOjkQs"]}'
+
+# same, but streams what the server is doing (Server-Sent Events)
+curl -N -X POST localhost:8000/api/sessions/s_ab12/ask_stream \
+  -H "Content-Type: application/json" -d '{"question":"what is tokenization?"}'
+#  -> data: {"type":"stage","stage":"embedding"}      as each stage BEGINS
+#     data: {"type":"stage","stage":"searching"}         (embedding, searching,
+#     data: {"type":"stage","stage":"ranking",...}        ranking, reading, answering)
+#     data: {"type":"done","message":{...}}           the stored message
+```
+
+Stages are emitted at real pipeline boundaries, never on a timer, so the UI's
+progress list always names what the server is actually busy with.
+
+Pages: `GET /` · `GET /demo` · `GET /app` (`/signin` and `/get-started` → `307 /app`).
+Meta: `GET /api/health` · `GET /api/config` · `GET /api/providers` ·
+`GET /api/auth/me` (returns the one account: `{"name":"admin","user_id":"default"}`).
 
 ## Layout
 
@@ -688,24 +798,27 @@ Repo root holds only build/config/docs; **all Python lives under `src/`**, with
 the four entrypoints as top-level modules in the package.
 
 ```
-├── Dockerfile               one image, four entrypoints (command selects which)
-├── docker-compose.yml       local dev: clip + seed gate + api + worker
-├── fly.toml                 Fly.io: api/worker/clip process groups + seed release_command
-├── requirements.txt
-├── .env.example             every env knob, documented inline
+├── Dockerfile               the app image (api/worker/seed/clip); WITH_TORCH arg = fat (default) or slim
+├── Dockerfile.clip          the CLIP service image (CPU default; TORCH_INDEX_URL build-arg for a GPU host)
+├── docker-compose.yml       local dev: clip + seed + api + worker (+ optional local-qdrant profile)
+├── fly.toml                 Fly.io: FAT api/worker/clip process groups + seed release_command
+├── fly.slim.toml            Fly.io: SLIM api+worker, CLIP on an external host
+├── requirements.txt         base deps (no torch)
+├── requirements-clip.txt    the local-CLIP torch stack (fat image + Dockerfile.clip)
+├── .env.example             every env knob, documented inline (cloud/deploy reference)
+├── .env.local.example       ready-to-copy LOCAL preset (local storage + Qdrant + keyless models)
 ├── .github/
 │   └── workflows/
 │       └── fly-deploy.yml   CI: deploy to Fly on push to dev
 ├── ui/                     static pages + JS modules, no build step
 │   ├── landing.html         marketing / entry page
 │   ├── demo.html            read-only sample-project UI
-│   ├── signin.html          email sign-in page
-│   ├── app.html             the workspace (presigned upload, status poll, player)
+│   ├── app.html             the workspace: add → process → ask, sessions, player
 │   ├── app.css              shared styles
-│   ├── common.js            shared helpers
+│   ├── common.js            shared helpers (identity is a constant — no sessions)
 │   ├── demo.js              sample-project logic
-│   ├── workspace.js         upload / status / ask / player
-│   └── signin.js            sign-in logic
+│   ├── workspace.js         sessions / upload / pipeline / streaming ask / player
+│   └── assets/              logo + favicon (served at /ui/assets/*)
 ├── examples/
 │   └── quickstart.py        manual in-process seed + terminal query demo
 └── src/                     ── entrypoints ──────────────────────────────────
@@ -714,14 +827,23 @@ the four entrypoints as top-level modules in the package.
     ├── clip_service.py      embedding service — warm local models behind a URL
     ├── seed.py              startup gate — indexes the sample, then exits
     │                        ── core ──────────────────────────────────────────
-    ├── config.py            every env knob in one place
-    ├── db.py                Neon Postgres: manifest + status + per-user LLM rows
+    ├── config.py            every env knob in one place (+ SINGLE_USER_ID)
+    ├── db.py                Neon Postgres: manifest + status + sessions + chat
+    │                        + the attached-LLM row (ms_users is legacy/unused)
     ├── jobs.py              Prefect Cloud trigger (API-side run_deployment)
     ├── storage.py           object storage (aws|gcp|gcp_native|flyio|local)
     │                        + presigned PUT/GET, HEAD verify, batch delete
     ├── llm.py               back-compat shim -> providers/llm/
-    ├── samples.py           the single-sample "Deep Dive into LLMs" corpus
+    ├── samples.py           the single-sample corpus (3Blue1Brown, "LLMs explained briefly")
     ├── seeding.py           blocking seed-to-completion logic (used by seed.py)
+    ├── api/                 ── HTTP routers ──────────────────────────────────
+    │   ├── videos.py        presign / register / status / retry / delete
+    │   │                    + user_id() and require_auth() — the single-user
+    │   │                    tenant resolution and the (no-op) auth hook
+    │   ├── sessions.py      sessions, membership, ask, ask_stream (SSE stages)
+    │   ├── search.py        /api/ask, /api/config, /api/llm, frames, transcript,
+    │   │                    media range-serving, and the HTML pages
+    │   └── auth.py          the one account — GET /api/auth/me, nothing else
     ├── providers/           ── pluggable models (see "Pluggable models") ─────
     │   ├── registry.py      the provider table: endpoints, models, dims, keys
     │   ├── status.py        configured/installed/missing — GET /api/providers
@@ -743,9 +865,6 @@ the four entrypoints as top-level modules in the package.
     │       ├── cohere.py        embed-v4.0 — both branches, no SDK
     │       ├── voyage.py        voyage-multimodal — both branches, no SDK
     │       └── remote.py        client for the warm embedding service
-    ├── api/
-    │   ├── videos.py        write path: presign, register, status, retry, delete
-    │   └── search.py        read path: /api/ask, /api/llm, /api/providers, media, UI
     ├── dispatcher.py        WFQ: fair round-robin admission of pending videos
     ├── ingest/
     │   ├── fetch.py         source acquisition (bucket download | yt-dlp) + sha256
@@ -763,11 +882,15 @@ the four entrypoints as top-level modules in the package.
 
 ## Security notes (presigned uploads)
 
-- On a public deploy, set `ADMIN_TOKEN` so the presign endpoint is authed —
-  otherwise anyone can mint upload URLs. (Unset = open, fine for local dev.)
+- ⚠️ **The API is unauthenticated.** `ADMIN_TOKEN` is no longer enforced, so
+  anyone who can reach the port can mint upload URLs, ingest, ask and delete.
+  Bind it to localhost, or put an authenticating proxy (Cloudflare Access, oauth2-proxy,
+  Fly private networking) in front of any deploy that isn't your own laptop.
+  The enforcement point still exists in one function — `require_auth()` in
+  [src/api/videos.py](src/api/videos.py) — so re-adding a check is a one-place edit.
 - The **server** generates the key (`{user}/{video}/source.{ext}`, everything for
   a video under `{user}/{video}/`), never the client; register re-checks the
-  prefix, so users can't claim others' objects.
+  prefix, so a client can't claim an object outside its own prefix.
 - Size and content-type are capped at presign time and re-verified via HEAD.
 - Keep the bucket **private**; thumbnails/playback go out via presigned GETs.
 - ffmpeg/yt-dlp parse untrusted input — run workers in containers, not on the

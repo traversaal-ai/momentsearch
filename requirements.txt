@@ -14,10 +14,12 @@ google-cloud-storage>=2.16     # STORAGE_PROVIDER=gcp_native
 # Vector DB
 qdrant-client>=1.12
 
-# Visual embeddings — local CLIP (IMAGE_EMBED_PROVIDER=clip, the default).
-# Pulls torch. Not needed if you use a hosted image embedder (jina/cohere/
-# voyage/gemini), but keep it unless you're trimming the image on purpose.
-sentence-transformers>=2.7
+# Visual embeddings — local CLIP (IMAGE_EMBED_PROVIDER=clip, the default) is the
+# torch stack, kept in requirements-clip.txt so it can be OMITTED. The fat app
+# image and the clip service image install it; a SLIM app image
+# (docker build --build-arg WITH_TORCH=false) skips it and must then reach a
+# remote CLIP via EMBED_SERVICE_URL. pillow + numpy stay here — the app needs
+# them for frame handling and vectors regardless of where embedding runs.
 pillow>=10.0
 numpy>=1.24
 

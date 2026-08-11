@@ -11,6 +11,7 @@ env/
 .env
 .env.*
 !.env.example
+!.env.local.example
 
 # Runtime data (videos, extracted frames, qdrant storage)
 data/
@@ -29,13 +30,6 @@ dist/
 # Benchmark
 benchmark/
 
-# Internal design notes (not published)
-MULTIMODAL_RETRIEVAL.md
-PRODUCTION_HANDOFF.md
-PRODUCTION_HANDOFF_NOTION.md
-RETRIEVAL_BACKLOG.md
-OVERVIEW.md
-AI_ARCHITECTURE.md
 
 # Internal presentations (not published)
 *.pptx

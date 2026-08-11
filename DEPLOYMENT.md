@@ -25,16 +25,19 @@ live on different machines.
 |---|---|---|---|
 | **api** | request concurrency | tiny, auto-stops when idle | stateless HTTP; must answer `202` instantly and never block on heavy work |
 | **worker** | ingest throughput | cheap CPU, scale to N | download + ffmpeg per video; add replicas for a backfill, remove them after |
-| **clip** | embedding FLOPs | one warm model (→ GPU later) | loading CLIP costs ~15–30s; doing it once in a shared service, not per-video, is the difference between fast and unusable |
+| **clip** | embedding FLOPs | one warm model (CPU here; GPU only on an external host — Fly has no GPUs since Jul 2026) | loading CLIP costs ~15–30s; doing it once in a shared service, not per-video, is the difference between fast and unusable |
 
-If these were one process, you'd pay for a GPU on every web box, or reload the
-model on every video, or block uploads behind embedding. Splitting them lets
-each grow (and cost) independently: `fly scale count worker=5` for a big import,
-or point `CLIP_SERVICE_URL` at a GPU machine when embedding is the wall — with
-**zero code changes**.
+If these were one process, you'd reload the model on every video or block uploads
+behind embedding. Splitting them lets each grow (and cost) independently:
+`fly scale count worker=5` for a big import, or point `EMBED_SERVICE_URL` at a
+faster/GPU embedder when that's the wall — with **zero code changes**.
 
 Everything stateful is a rented managed service (Neon, Prefect Cloud, Qdrant
 Cloud, GCS), so every Fly machine is disposable — "nothing on local."
+
+> **Need a GPU CLIP?** Fly is CPU-only (GPUs deprecated Jul 31 2026), so run the
+> GPU CLIP on an external host and keep api + worker slim on Fly. See the
+> **`fly.slim.toml`** config and README's "Split / GPU deployment".
 
 ## Prerequisites
 
@@ -215,5 +218,8 @@ the clip service) is a burst cost only — rent it for a big backfill, kill it a
   `fly secrets set YT_COOKIES_B64=…` command to refresh. Uploads are unaffected.
 - **Browser uploads fail** → the GCS bucket needs a CORS rule allowing `PUT`
   from your site's origin (see `.env.example`).
-- **`clip` unreachable** → confirm `CLIP_SERVICE_URL` in fly.toml matches the
-  app name (`clip.process.<app>.internal:8001`).
+- **`clip` unreachable** → the address is derived at runtime from `FLY_APP_NAME`
+  (`clip.process.<app>.internal:8001`), so just confirm the `app = '…'` line in
+  `fly.toml` is your real app name and the `clip` process is running
+  (`fly status`). To point at a different embedder, set `EMBED_SERVICE_URL` as a
+  secret — it wins over the derived address.

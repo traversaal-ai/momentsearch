@@ -5,32 +5,45 @@
 #   API + UI:        http://localhost:8000
 #   Run/queue view:  https://app.prefect.cloud -> Runs
 # Vector store defaults to Qdrant Cloud via QDRANT_URL in .env. To run Qdrant
-# LOCALLY instead, uncomment the `qdrant` service below and set (in .env):
+# LOCALLY instead, you touch ONLY .env — nothing to uncomment, no flags. Add:
+#   COMPOSE_PROFILES=local-qdrant     # compose reads this and auto-starts qdrant
 #   QDRANT_URL=http://qdrant:6333     (leave QDRANT_API_KEY blank)
+# Then `docker compose up` brings Qdrant up on its own. Cloud users set neither,
+# so the qdrant service never runs for them.
 # Storage is already local when STORAGE_PROVIDER=local (files under ./data) —
 # no service needed. Together that's the whole stack local except the queue
-# (Prefect) and the manifest DB (Postgres). See README "Run it fully local".
+# (Prefect) and the manifest DB (Postgres). See README "Run storage and Qdrant locally".
+#
+# Image variants: everything builds the FAT app image by default (WITH_TORCH=true).
+# api + worker take the arg, so `WITH_TORCH=false docker compose build` makes them
+# SLIM (no local model) — they then embed only via the `clip` service, which stays
+# fat (torch) regardless. Production/GPU builds the clip service from Dockerfile.clip
+# (see README "Split / GPU deployment"); locally the fat image serves clip fine.
 services:
-  # Local vector store (OPTIONAL) — uncomment to run Qdrant on your machine
-  # instead of Qdrant Cloud. Data persists under ./data/qdrant, and unlike the
-  # embedded single-process mode, api + worker + seed can all share it. After
-  # uncommenting, set QDRANT_URL=http://qdrant:6333 in .env (blank the API key),
-  # and optionally add `qdrant` to the depends_on of api/worker/seed (it boots
-  # fast and the app retries, so this is just to silence first-second races).
-  # qdrant:
-  #   image: qdrant/qdrant:latest
-  #   ports:
-  #     - "6333:6333"          # REST/gRPC — also lets you open the dashboard
-  #   volumes:
-  #     - ./data/qdrant:/qdrant/storage
-  #   restart: unless-stopped
+  # Local vector store — starts ONLY when .env has COMPOSE_PROFILES=local-qdrant
+  # (a compose profile). No uncommenting, no CLI flag: describe it in .env and
+  # `docker compose up` brings it up automatically. Data persists under
+  # ./data/qdrant, shared by api + worker + seed (unlike embedded single-process).
+  # Boots in ~1-2s, before the app makes its first Qdrant call, so no depends_on
+  # is needed. Cloud users don't set the profile, so this never runs for them.
+  qdrant:
+    image: qdrant/qdrant:latest
+    profiles: ["local-qdrant"]
+    ports:
+      - "6333:6333"          # REST/gRPC — also opens the dashboard
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    restart: unless-stopped
 
   # The inference service: ONE warm CLIP model behind a URL. api + worker send
   # batches here instead of each flow run paying a fresh ~15-30s model load.
   # Scaling embedding = scaling THIS service (CPU here; same container on a
   # GPU machine later — only CLIP_SERVICE_URL changes).
   clip:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_TORCH: "true"        # the clip service always needs the local model
     command: uvicorn src.clip_service:app --host 0.0.0.0 --port 8001
     env_file: .env
     volumes:
@@ -46,7 +59,10 @@ services:
   # successful run this exits in seconds. First run takes a few minutes
   # (model download + 1 video); watch its logs: docker compose logs -f seed
   seed:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_TORCH: "true"        # kept fat so it can seed even if clip is down
     command: python -m src.seed
     env_file: .env
     environment:
@@ -61,7 +77,10 @@ services:
     restart: "no"
 
   api:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_TORCH: "${WITH_TORCH:-true}"   # set WITH_TORCH=false to build slim
     # --reload: edits to src/ hot-reload the API; edits to ui/ show on refresh.
     command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
     ports:
@@ -83,7 +102,10 @@ services:
     restart: unless-stopped
 
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_TORCH: "${WITH_TORCH:-true}"   # set WITH_TORCH=false to build slim
     command: python -m src.worker
     env_file: .env
     environment:

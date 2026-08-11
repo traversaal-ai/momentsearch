@@ -239,6 +239,13 @@ elif os.environ.get("FLY_APP_NAME"):
 else:
     EMBED_SERVICE_URL = ""
 CLIP_SERVICE_URL = EMBED_SERVICE_URL   # legacy alias
+# Optional shared secret for the embedding service. When set, the clip service
+# requires `Authorization: Bearer <token>` on its /embed routes and api/worker
+# send it. Needed only when the clip service is reachable over a NON-private
+# network (a GPU host on another provider); unset = open, which is correct for
+# Fly's private *.internal networking and docker-compose. Pair it with HTTPS —
+# the token authenticates but does not encrypt. Same value on the app and clip.
+EMBED_SERVICE_TOKEN = os.getenv("EMBED_SERVICE_TOKEN", "").strip()
 # Stamped on every Qdrant point so a re-embed can find stale vectors. Keeps the
 # historical "<model>-v1" form for CLIP so existing indexes aren't invalidated.
 EMBED_VERSION = os.getenv(
