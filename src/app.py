@@ -36,8 +36,9 @@ from .rag import vector_store
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from . import preflight
+    from . import preflight, setup_check
     preflight.check("api")   # warn (or, if STRICT_DEPLOY_CHECK, abort) on local settings
+    setup_check.log_startup()  # print which keys are missing (Prefect, LLM, ...)
     db.init_schema()
     # Create the Qdrant collection up front (known CLIP dims resolve without
     # loading the model) so a question before the first ingest returns

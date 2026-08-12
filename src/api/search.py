@@ -18,7 +18,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
                                StreamingResponse)
 from pydantic import BaseModel
 
-from .. import config, db, llm, storage
+from .. import config, db, llm, setup_check, storage
 from ..providers import status as provider_status
 from ..providers.embed.base import EmbedUnavailable
 from ..rag import search as rag_search
@@ -69,6 +69,10 @@ def get_config(uid: str = Depends(user_id_dep)):
         # Speaker recognition ("who said what") is available only when Gemini is
         # configured; the upload UI uses this to enable/disable its checkbox.
         "diarize_available": bool(config.DIARIZE_ENABLED and config.GEMINI_API_KEY),
+        # Config readiness — what this instance is still missing (missing Prefect
+        # key, no Qdrant, no LLM, ...). The workspace draws its setup pill/banner
+        # from this. One source of truth: src/setup_check.py.
+        "setup": setup_check.report(),
         "upload_mode": "presigned" if storage.presign_capable() else "direct",
         "max_upload_mb": config.MAX_UPLOAD_MB,
         # Google Drive import. Both ids are public by design — they're client-side

@@ -128,7 +128,69 @@ renderLimit();
       b.textContent="No LLM — moments only";
       b.className="md:ml-auto text-xs px-3 py-1 rounded-full border border-[#e7c46a] text-[#8a6d1a] bg-[#fbf2d8] hidden sm:inline";
     }
+    renderSetup(c.setup);
   }catch{ $("#llmBadge").textContent="API offline"; }
+})();
+
+/* ---------- setup status: what keys are still missing ----------
+   Draws the header pill (green/amber/coral dot + popover checklist) and, only for
+   BLOCKING gaps, the slim bar under the header. One data source: /api/config.setup
+   (src/setup_check.py). Non-blocking gaps (no LLM, no Gemini) just tint the dot —
+   they never drop the bar, so the app doesn't nag about optional features. */
+function renderSetup(s){
+  const wrap=$("#setupWrap"); if(!wrap||!s) return;
+  const issues=s.issues||[];
+  const blocking=issues.filter(i=>i.level==="blocking");
+  const degraded=issues.filter(i=>i.level==="degraded");
+  wrap.classList.remove("hidden");
+
+  const dot=$("#setupDot"), txt=$("#setupPillText");
+  if(blocking.length){ dot.className="w-2 h-2 rounded-full bg-coral"; txt.textContent="Setup"; }
+  else if(degraded.length){ dot.className="w-2 h-2 rounded-full bg-[#e0a12a]"; txt.textContent="Setup"; }
+  else { dot.className="w-2 h-2 rounded-full bg-[#2f9e57]"; txt.textContent="Ready"; }
+
+  $("#setupPop").innerHTML = issues.length
+    ? `<div class="text-[10.5px] uppercase tracking-wide text-muted font-600 mb-1.5">Finish setup</div>`
+      + issues.map(i=>{
+          const blk=i.level==="blocking";
+          const envs=i.env.map(e=>`<code class="bg-paper2 rounded px-1 py-0.5 text-[10.5px]">${esc(e)}</code>`).join(" ");
+          return `<div class="py-1.5 border-b border-line last:border-0">
+            <div class="flex items-center gap-1.5 text-[12px] font-600 ${blk?"text-coral2":"text-[#8a6d1a]"}">
+              <span aria-hidden="true">${blk?"●":"○"}</span>${esc(i.feature)}</div>
+            <div class="text-[11px] text-muted mt-0.5 leading-snug">${esc(i.fix)}</div>
+            <div class="mt-1 flex flex-wrap gap-1">${envs}</div>
+          </div>`;
+        }).join("")
+      + `<div class="text-[10.5px] text-muted mt-2">Set these in your <code class="bg-paper2 rounded px-1">.env</code>, then restart.</div>`
+    : `<div class="text-[12px] text-[#1f7a43] font-600 flex items-center gap-1.5"><span aria-hidden="true">✓</span>All keys set — every feature is on.</div>`;
+
+  const bar=$("#setupBar");
+  if(blocking.length){
+    const sig=blocking.map(i=>i.id).sort().join(",");
+    $("#setupBarMsg").textContent = blocking.length===1
+      ? `${blocking[0].feature} — set ${blocking[0].env.join(" + ")} to fix it`
+      : `${blocking.length} things still need setup to unlock everything`;
+    bar.dataset.sig=sig;
+    // Stay hidden only if the user already dismissed THIS exact set of gaps.
+    bar.classList.toggle("hidden", localStorage.getItem("ms_setup_dismissed")===sig);
+  } else {
+    bar.classList.add("hidden");
+  }
+}
+
+// Pill opens the checklist; click-away and Esc close it.
+(function wireSetup(){
+  const pill=$("#setupPill"), pop=$("#setupPop");
+  if(!pill||!pop) return;
+  const open=()=>{ pop.classList.remove("hidden"); pill.setAttribute("aria-expanded","true"); };
+  const close=()=>{ pop.classList.add("hidden"); pill.setAttribute("aria-expanded","false"); };
+  pill.onclick=e=>{ e.stopPropagation(); pop.classList.contains("hidden")?open():close(); };
+  document.addEventListener("click", e=>{ if(!pop.contains(e.target)&&e.target!==pill) close(); });
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape") close(); });
+  const fix=$("#setupBarFix"); if(fix) fix.onclick=e=>{ e.stopPropagation(); open(); };
+  const x=$("#setupBarClose");
+  if(x) x.onclick=()=>{ const bar=$("#setupBar");
+    localStorage.setItem("ms_setup_dismissed", bar.dataset.sig||"1"); bar.classList.add("hidden"); };
 })();
 
 /* ---------- boot ----------

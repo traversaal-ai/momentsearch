@@ -22,7 +22,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import config, db, jobs, storage
+from .. import config, db, jobs, setup_check, storage
 from ..samples import is_sample, sample_attribution
 from ..config import (
     ALLOWED_UPLOAD_TYPES,
@@ -158,6 +158,15 @@ class RegisterRequest(BaseModel):
 
 @router.post("", status_code=202, dependencies=[Depends(require_auth)])
 def register(req: RegisterRequest, uid: str = Depends(user_id)):
+    # Don't accept a video into a stack that can't process it — it would just sit
+    # `pending` forever. Reject up front naming the exact key to set (same gaps the
+    # workspace banner shows). See src/setup_check.py.
+    blockers = setup_check.ingest_blockers()
+    if blockers:
+        keys = ", ".join(k for b in blockers for k in b["env"])
+        raise HTTPException(
+            503, f"Video ingest isn't configured yet — set {keys} in your .env "
+                 f"(see the setup banner). Existing videos still work.")
     # Speaker recognition is Gemini-only: reject up front if the box is checked
     # but no key is configured, so the user isn't surprised by an unlabeled video.
     if req.speaker_recognition and not config.GEMINI_API_KEY:

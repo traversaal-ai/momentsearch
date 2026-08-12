@@ -25,6 +25,11 @@
 **/*.pem
 **/*.key
 **/cookies.txt
+# The whole secrets/ tree, not just cookies.txt: it's mounted at run time
+# (docker-compose mounts ./secrets read-only into worker + seed) and anything
+# else parked there — a service-account JSON, a proxy list — has no business
+# being uploaded to a remote builder either.
+secrets/
 
 # ── Runtime data ──────────────────────────────────────────────────────────────
 # Raw uploads, extracted frames, local-provider storage, local Qdrant. This is

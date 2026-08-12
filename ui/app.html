@@ -52,11 +52,39 @@
     </button>
 
     <span id="llmBadge" class="md:ml-auto text-xs px-3 py-1 rounded-full border border-line text-muted hidden sm:inline">checking…</span>
+
+    <!-- Setup status. Quiet by default: a small gear + colored dot (green = all
+         keys set, amber = a feature off, coral = ingest blocked). Click for the
+         checklist of exactly what to set. The loud part (the bar below the header)
+         only appears for BLOCKING gaps. Hidden until /api/config reports. -->
+    <div id="setupWrap" class="relative shrink-0 hidden">
+      <button id="setupPill" class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border border-line text-muted hover:text-ink hover:border-coral transition"
+              title="Setup status" aria-haspopup="true" aria-expanded="false">
+        <svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M4.6 12H2M22 12h-2.6M6.2 6.2 4.4 4.4M19.6 19.6l-1.8-1.8M17.8 6.2l1.8-1.8M4.4 19.6l1.8-1.8"/>
+        </svg>
+        <span id="setupDot" class="w-2 h-2 rounded-full bg-[#2f9e57]"></span>
+        <span id="setupPillText" class="hidden sm:inline">Setup</span>
+      </button>
+      <div id="setupPop" class="hidden absolute right-0 mt-2 w-72 max-w-[85vw] bg-card border border-line rounded-xl shadow-lg p-3 z-50 text-left"></div>
+    </div>
+
     <!-- Single-user: this names the account, it doesn't offer to change it. -->
     <span id="avatar" class="w-7 h-7 rounded-full bg-coral/15 border border-coral/35 text-coral2 text-xs font-bold flex items-center justify-center shrink-0"></span>
     <span id="whoName" class="text-xs text-muted hidden lg:inline"></span>
   </div>
 </header>
+
+<!-- Loud setup notice — auto-drops ONLY for blocking gaps (something needed to add
+     or search videos is missing). Dismissible; returns only if a new gap appears. -->
+<div id="setupBar" class="hidden shrink-0 border-b border-coral/40 bg-coral/8 text-coral2">
+  <div class="px-4 sm:px-6 py-2 flex items-center gap-2 text-[12.5px]">
+    <span aria-hidden="true">⚠</span>
+    <span id="setupBarMsg" class="flex-1 min-w-0 truncate font-500"></span>
+    <button id="setupBarFix" class="font-semibold underline underline-offset-2 hover:no-underline shrink-0">Fix →</button>
+    <button id="setupBarClose" class="opacity-70 hover:opacity-100 shrink-0" title="Dismiss" aria-label="Dismiss">✕</button>
+  </div>
+</div>
 
 <main class="flex-1 flex min-h-0 overflow-hidden">
 

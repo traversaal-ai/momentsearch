@@ -49,7 +49,7 @@ GEMINI_API_KEY=...
 EOF
 ```
 
-For YouTube: drop `cookies.txt` at `./data/cookies.txt` and add `YT_COOKIES_FILE=/app/data/cookies.txt`.
+For YouTube: drop `cookies.txt` at `./secrets/cookies.txt` and add `YT_COOKIES_FILE=/app/secrets/cookies.txt` (compose mounts `./secrets` read-only into the worker and seed — it's deliberately outside `./data`, which is the storage tree).
 
 **4. Bring it up**
 

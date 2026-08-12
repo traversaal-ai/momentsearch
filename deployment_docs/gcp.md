@@ -62,7 +62,7 @@ One box runs the whole **fat** image (embeds in-process and serves clip).
    DEPLOY_ENV=production
    ```
 
-   Keep `GOOGLE_CLOUD_PRIVATE_KEY` quoted with literal `\n` (`config.py` un-escapes at load). YouTube: drop `cookies.txt` at `./data/cookies.txt` + set `YT_COOKIES_FILE=/app/data/cookies.txt`.
+   Keep `GOOGLE_CLOUD_PRIVATE_KEY` quoted with literal `\n` (`config.py` un-escapes at load). YouTube: drop `cookies.txt` at `./secrets/cookies.txt` + set `YT_COOKIES_FILE=/app/secrets/cookies.txt` (compose mounts `./secrets` read-only; it's outside `./data` on purpose, that being the storage tree).
 
 4. **Bring it up:**
 

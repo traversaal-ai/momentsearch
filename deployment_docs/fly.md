@@ -62,14 +62,14 @@ App names are globally unique — pick your own (e.g. `momentsearch-<you>`) and 
 
 ### 3. Push secrets
 
-Import `.env` (skip local-only bits), then add YouTube cookies as base64 (no `./data` mount on Fly; the worker decodes it to a temp file).
+Import `.env` (skip local-only bits), then add YouTube cookies as base64 — Fly has no bind mount for `./secrets`, so the worker decodes the secret to a writable temp file instead (`src/ingest/fetch.py::_cookiefile`).
 
 ```powershell
 Get-Content .env |
   Where-Object { $_ -match '^[A-Z_]+=.+' -and $_ -notmatch '^FLY_' -and $_ -notmatch '^YT_COOKIES_FILE=' } |
   fly secrets import
 
-$b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("data/cookies.txt"))
+$b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("secrets/cookies.txt"))
 fly secrets set YT_COOKIES_B64="$b64"
 ```
 
