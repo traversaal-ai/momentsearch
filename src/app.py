@@ -48,6 +48,14 @@ async def lifespan(app: FastAPI):
             vector_store.ensure_text_collection()  # transcript (bge text)
     except Exception as exc:
         print(f"[startup] Qdrant not ready ({exc!r}) — search degrades to empty results")
+    # Pre-warm the local reranker (download + load + first ONNX inference) so the
+    # FIRST query is fast, not a cold-model spike. No-op when reranking is off or
+    # uses a hosted API. Runs in a thread so it can't block the event loop, and is
+    # awaited so "UP" prints only once the model is actually hot.
+    import asyncio
+
+    from .rag import rerank
+    await asyncio.to_thread(rerank.warm)
     # The clear "it's up" signal. The API starts only AFTER the seed gate finishes
     # (docker-compose depends_on), so this line is the moment the app is actually
     # reachable — the noisy build/seed logs above are done.

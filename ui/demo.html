@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Demo · MomentSearch</title>
-<link rel="icon" href="/ui/assets/traversaal-mark.png">
+<link rel="icon" href="/ui/assets/momentsearch-mark.svg">
 <link rel="apple-touch-icon" href="/ui/assets/traversaal-mark.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,9 +30,14 @@
       <span aria-hidden="true">←</span><span class="hidden sm:inline">Home</span>
     </a>
     <span class="w-px h-5 bg-line shrink-0" aria-hidden="true"></span>
-    <a href="/" id="brand" class="flex items-center gap-2.5">
-      <span class="w-8 h-8 rounded-lg bg-coral flex items-center justify-center text-white font-bold display">M</span>
-      <span class="font-bold tracking-tight hidden sm:inline">MomentSearch</span>
+    <!-- Same wordmark as the landing page, one line (this header is dense, so no
+         "Powered by" under it — the footer carries Traversaal here). -->
+    <a href="/" id="brand" class="brandMain shrink-0" aria-label="MomentSearch home">
+      <span class="brandName text-[17px]">M<svg class="brandO" viewBox="4 4 56 56" aria-hidden="true">
+        <circle cx="32" cy="32" r="23" fill="none" stroke="currentColor" stroke-width="7"/>
+        <path d="M27 21v22l19-11Z" fill="currentColor"/>
+        <circle cx="49" cy="47" r="6" fill="#FF5A3C" stroke="#FBF7F0" stroke-width="2"/>
+      </svg>ment<span class="brandSearch">Search</span></span>
     </a>
     <span class="text-xs px-2 py-0.5 rounded-full border border-line text-muted">demo</span>
     <span id="llmBadge" class="ml-auto text-xs px-3 py-1 rounded-full border border-line text-muted">checking…</span>

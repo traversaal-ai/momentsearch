@@ -52,6 +52,26 @@ html,body{background:#FBF7F0;color:#1E1B16;font-family:Inter,system-ui,sans-seri
 .fade-in{animation:fi .45s ease both}
 @keyframes fi{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
+/* ── Brand lockup ──────────────────────────────────────────────────────────
+ * The "o" of Moment IS the play button, so the wordmark carries the mark and
+ * needs no logo tile beside it. Sized in `em` throughout: set font-size on
+ * .brandName and the mark scales with the text instead of needing its own
+ * numbers per page. The ring and triangle take currentColor (they inherit the
+ * header's ink); only the coral moment-dot is fixed, and it keeps its white
+ * keyline so it reads as a marker sitting ON the ring rather than a blob in it.
+ * overflow:visible matters — the dot is drawn past the viewBox edge.          */
+.brandLock{display:flex;flex-direction:column;align-items:flex-start;line-height:1}
+.brandMain{display:inline-flex;align-items:center;color:#1E1B16;text-decoration:none}
+.brandName{display:inline-flex;align-items:center;font-weight:700;letter-spacing:-.035em;
+  white-space:nowrap}
+.brandO{width:.78em;height:.78em;margin:0 .015em;flex:none;overflow:visible}
+.brandSearch{color:#FF5A3C}
+/* Who made it, directly beneath the product — not competing with it. */
+.brandBy{display:flex;align-items:center;gap:.3rem;margin-top:.32rem;color:#6B6357;
+  font-size:.625rem;font-weight:600;text-decoration:none}
+.brandBy img{height:1rem;width:auto;opacity:.82;transition:opacity .2s ease}
+.brandBy:hover img{opacity:1}
+
 /* ── Paper grain ───────────────────────────────────────────────────────────
  * A single fixed multiply layer so the whole page reads as printed stock
  * rather than a flat #FBF7F0 fill. Purely decorative, never interactive.     */

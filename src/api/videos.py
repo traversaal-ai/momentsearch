@@ -229,6 +229,15 @@ def _public(row: dict) -> dict:
     # Creator credit — populated for the curated samples only (samples.py); None
     # for anything a user added, since ingest doesn't record the uploader.
     out.update(sample_attribution(row["id"]))
+    # Thumbnail for UPLOADS: they have no external still like YouTube's CDN, so
+    # the list would show an empty box forever. Point it at frame 0 (the same
+    # stored still the moment cards use) once frames exist — None while still
+    # processing so the UI shows a placeholder, not a broken image. YouTube keeps
+    # using its own CDN thumbnail (fast, free), so we skip signing one for it.
+    out["thumbnail"] = None
+    if row.get("source") != "youtube" and row.get("frame_count"):
+        from ..rag.search import _thumb_url
+        out["thumbnail"] = _thumb_url(row["user_id"], row["id"], 0)
     return out
 
 

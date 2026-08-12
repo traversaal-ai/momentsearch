@@ -208,9 +208,15 @@ function videoRow(v){
   const busy=INFLIGHT.includes(v.status);
   const pct=v.progress ? Math.round(v.progress*100) : null;
   const yid=v.id.startsWith("yt_") ? v.id.slice(3) : null;
-  const thumb=yid
-    ? `<img loading="lazy" src="https://img.youtube.com/vi/${esc(yid)}/default.jpg" class="w-11 h-7 object-cover rounded border border-line shrink-0" onerror="this.style.opacity=0">`
-    : `<div class="w-11 h-7 rounded border border-line bg-paper2 shrink-0"></div>`;
+  // YouTube -> its CDN still (instant, free). Upload -> frame 0 from the API once
+  // indexed (v.thumbnail). Upload still processing has no frame yet -> a plain box,
+  // not an empty gap.
+  const thumbSrc = yid ? `https://img.youtube.com/vi/${esc(yid)}/default.jpg` : (v.thumbnail || null);
+  const thumb = thumbSrc
+    ? `<img loading="lazy" src="${esc(thumbSrc)}" class="w-11 h-7 object-cover rounded border border-line shrink-0" onerror="this.style.opacity=0">`
+    : `<div class="w-11 h-7 rounded border border-line bg-paper2 shrink-0 flex items-center justify-center">${
+        busy ? `<span class="dotPulse"></span>` : `<span class="text-muted text-[9px] leading-none">🎞</span>`
+      }</div>`;
   // Only a searchable video gets a checkbox — there is nothing to include yet
   // for one that's still indexing, and a dead control invites a wrong guess.
   const check = v.status==="indexed"

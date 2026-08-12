@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>MomentSearch — search inside video by what's on screen</title>
-<link rel="icon" href="/ui/assets/traversaal-mark.png">
+<link rel="icon" href="/ui/assets/momentsearch-mark.svg">
 <link rel="apple-touch-icon" href="/ui/assets/traversaal-mark.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,16 +25,23 @@
 
 <header class="border-b border-line">
   <div class="max-w-5xl mx-auto px-6 py-4 flex items-center gap-3">
-    <span class="w-8 h-8 rounded-lg bg-coral flex items-center justify-center text-white font-bold display">M</span>
-    <span class="font-bold tracking-tight">MomentSearch</span>
-
-    <!-- Whose project this is. The mark's coral is the same coral as the palette. -->
-    <a href="https://traversaal.ai" target="_blank" rel="noopener"
-       class="flex items-center gap-2 group pl-3 ml-1 border-l border-line" title="Built by Traversaal.ai">
-      <span class="hidden sm:inline text-xs text-muted">built by</span>
-      <img src="/ui/assets/traversaal-logo-light.png" alt="Traversaal.ai"
-           class="h-5 w-auto opacity-85 group-hover:opacity-100 transition">
-    </a>
+    <!-- The wordmark: the "o" of Moment is the play button (see .brandO in
+         app.css), so there's no separate logo tile — and Traversaal sits
+         directly under the product rather than beside it, competing with it. -->
+    <div class="brandLock">
+      <a href="/" class="brandMain" aria-label="MomentSearch home">
+        <span class="brandName text-[22px]">M<svg class="brandO" viewBox="4 4 56 56" aria-hidden="true">
+          <circle cx="32" cy="32" r="23" fill="none" stroke="currentColor" stroke-width="7"/>
+          <path d="M27 21v22l19-11Z" fill="currentColor"/>
+          <circle cx="49" cy="47" r="6" fill="#FF5A3C" stroke="#FBF7F0" stroke-width="2"/>
+        </svg>ment<span class="brandSearch">Search</span></span>
+      </a>
+      <a href="https://traversaal.ai" target="_blank" rel="noopener"
+         class="brandBy" title="Powered by Traversaal.ai">
+        <span>Powered by</span>
+        <img src="/ui/assets/traversaal-logo-light.png" alt="Traversaal.ai">
+      </a>
+    </div>
 
     <!-- No "Workspace →" pill up here. The hero's primary button below goes to
          the same place, and two identical calls to action on one screen make you
@@ -68,8 +75,8 @@
       </a>
     </div>
     <p class="rise mt-4 text-xs text-muted" style="--d:10">
-      No sign-up, no sign-in — the workspace opens straight away. A pre-indexed
-      talk is already in it; add your own YouTube links or uploads any time.
+      Jump straight in — the workspace opens instantly with a pre-indexed talk
+      already loaded. Add your own YouTube links or uploads any time.
     </p>
   </div>
 
