@@ -29,7 +29,15 @@ docker compose up --build
 
 `.env.local.example` is a **local, keyless preset** — storage, models, Qdrant and Postgres all run on your machine (`DATABASE_URL` and `QDRANT_URL` are covered by the `local-postgres` / `local-qdrant` compose profiles). The one thing to fill in is **Prefect** (`PREFECT_API_URL` + `PREFECT_API_KEY`, the ingest queue) — a free key, no card, from [app.prefect.cloud](https://app.prefect.cloud) → avatar → API Keys.
 
-First run takes a few minutes (model download + indexing the sample video); watch it with `docker compose logs -f seed`. Later runs start in seconds. No LLM key is fine — retrieval still returns ranked, clickable moments (the UI badge reads "No LLM — moments only"); add `LLM_PROVIDER` + a key when you want prose.
+**First run takes a few minutes** (the first `docker build` also downloads PyTorch). A one-shot `seed` step then downloads the CLIP model and indexes the sample video *before* `api`/`worker` start, so **`http://localhost:8000` won't answer until seeding finishes** — that's expected, not a hang. Watch progress with `docker compose logs -f`; **you'll know it's ready when the logs print:**
+
+```
+================================================================
+  MomentSearch is UP  ->  open  http://localhost:8000
+================================================================
+```
+
+Later runs find the sample already indexed and start in seconds. No LLM key is fine — retrieval still returns ranked, clickable moments (the UI badge reads "No LLM — moments only"); add `LLM_PROVIDER` + a key when you want prose.
 
 ## Without Docker
 
@@ -72,6 +80,15 @@ Copy `.env.example` (the full, inline-documented reference) and set what you nee
 | `GEMINI_API_KEY` | required for speaker recognition ("who said what"). |
 
 **Feature flags:** `ENABLE_TRANSCRIPT` (the transcript branch), `ENABLE_RERANK` (reranker), `DIARIZE_ENABLED` (speaker recognition master switch), `SEED_SAMPLE_VIDEOS` (index the sample talk on startup).
+
+**YouTube ingest — cookies.** YouTube bot-checks requests **by IP**, so fetching a video — *especially its captions* — can fail with *"Sign in to confirm you're not a bot."* (frames often still index via fallback clients, but the transcript branch has no fallback, so it comes out visual-only). This hits **deploys** (datacenter IP) almost always, and **local** runs increasingly too. If fetching fails, add cookies from a logged-in browser:
+
+1. **Get them** — install a "Get cookies.txt" browser extension (e.g. *Get cookies.txt LOCALLY*), open `youtube.com` while signed in, and export a **Netscape-format `cookies.txt`**.
+2. **Add them:**
+   - **Local:** save it to `./data/cookies.txt` and set `YT_COOKIES_FILE=/app/data/cookies.txt` (compose already mounts `./data`).
+   - **Deploy:** set `YT_COOKIES_B64=<base64 of cookies.txt>` (no `./data` mount there).
+
+Cookies expire in ~2–3 weeks — re-export when YouTube starts failing again. **Uploads and search are unaffected** — this only touches YouTube fetching.
 
 > **Model providers & how to set each in env → [MODELS.md](MODELS.md).**
 >

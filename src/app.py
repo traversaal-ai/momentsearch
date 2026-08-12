@@ -48,6 +48,12 @@ async def lifespan(app: FastAPI):
             vector_store.ensure_text_collection()  # transcript (bge text)
     except Exception as exc:
         print(f"[startup] Qdrant not ready ({exc!r}) — search degrades to empty results")
+    # The clear "it's up" signal. The API starts only AFTER the seed gate finishes
+    # (docker-compose depends_on), so this line is the moment the app is actually
+    # reachable — the noisy build/seed logs above are done.
+    bar = "=" * 64
+    print(f"\n{bar}\n  MomentSearch is UP  ->  open  http://localhost:8000\n{bar}\n",
+          flush=True)
     yield
 
 

@@ -122,6 +122,16 @@ def seed_to_completion() -> bool:
 
     wait_for_clip()
 
+    # Loud, plain-language banner: the app is GATED on this step, so a first run
+    # sits here for a few minutes (CLIP model download + CPU frame embedding) with
+    # the port not yet answering. Say so, so it doesn't read as a hang.
+    if _not_indexed():
+        bar = "-" * 64
+        print(f"\n{bar}\n[seed] Indexing the sample video. FIRST RUN takes a few "
+              f"minutes\n       (downloads the CLIP model + embeds frames on CPU). "
+              f"The app\n       starts once this finishes — you'll see "
+              f"'MomentSearch is UP'.\n{bar}\n", flush=True)
+
     # The loop below no-ops when nothing is pending, so no early return — we still
     # fall through to the transcript backfill for already-indexed samples.
     for attempt in range(1, _MAX_PASSES + 1):
