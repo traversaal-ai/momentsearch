@@ -43,23 +43,37 @@ _cookie_path: str | None = None
 
 def _cookiefile() -> str | None:
     """Resolve cookies from a mounted file (YT_COOKIES_FILE) or a base64 secret
-    (YT_COOKIES_B64, written to a temp file once). Same code, local or cloud."""
+    (YT_COOKIES_B64) into a WRITABLE scratch copy, and hand yt-dlp that.
+
+    yt-dlp REWRITES the cookiefile after each request (to persist refreshed
+    cookies), so pointing it straight at a read-only mount — a secret volume
+    mounted `:ro`, which is the right way to mount a secret — fails with
+    '[Errno 30] Read-only file system'. Copying the source into scratch once
+    keeps the mount read-only AND lets yt-dlp write back freely. Cached per
+    process; delete the scratch copy or restart the worker to pick up re-exported
+    cookies."""
     global _cookie_path
     from ..config import YT_COOKIES_B64, YT_COOKIES_FILE
 
-    # Prefer a real mounted file; if the path is set but missing (e.g. the
-    # local YT_COOKIES_FILE got imported to Fly where ./data isn't mounted),
-    # fall through to the base64 secret instead of handing yt-dlp a dead path.
-    if YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
-        return YT_COOKIES_FILE
-    if YT_COOKIES_B64:
-        if _cookie_path is None:
-            import base64
-            p = scratch_dir() / "yt_cookies.txt"
-            p.write_bytes(base64.b64decode(YT_COOKIES_B64))
-            _cookie_path = str(p)
+    if _cookie_path and Path(_cookie_path).exists():
         return _cookie_path
-    return None
+
+    # Prefer a real mounted file; if the path is set but missing (e.g. a local
+    # YT_COOKIES_FILE imported to a host where that mount doesn't exist), fall
+    # through to the base64 secret instead of handing yt-dlp a dead path.
+    raw: bytes | None = None
+    if YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
+        raw = Path(YT_COOKIES_FILE).read_bytes()
+    elif YT_COOKIES_B64:
+        import base64
+        raw = base64.b64decode(YT_COOKIES_B64)
+    if raw is None:
+        return None
+
+    p = scratch_dir() / "yt_cookies.txt"        # scratch is writable (it's where downloads land)
+    p.write_bytes(raw)
+    _cookie_path = str(p)
+    return _cookie_path
 
 
 def _yt_opts(video_id: str, clients: list[str]) -> dict:
