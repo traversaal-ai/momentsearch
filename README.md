@@ -85,10 +85,19 @@ Copy `.env.example` (the full, inline-documented reference) and set what you nee
 
 1. **Get them** — install a "Get cookies.txt" browser extension (e.g. *Get cookies.txt LOCALLY*), open `youtube.com` while signed in, and export a **Netscape-format `cookies.txt`**.
 2. **Add them:**
-   - **Local:** save it to `./data/cookies.txt` and set `YT_COOKIES_FILE=/app/data/cookies.txt` (compose already mounts `./data`).
-   - **Deploy:** set `YT_COOKIES_B64=<base64 of cookies.txt>` (no `./data` mount there).
+   - **Local:** save it to `./secrets/cookies.txt` and set `YT_COOKIES_FILE=/app/secrets/cookies.txt` (compose mounts `./secrets` read-only into the worker and seed; kept out of the `./data` storage tree, and `secrets/` is gitignored).
+   - **Deploy:** set `YT_COOKIES_B64=<base64 of cookies.txt>` (no `./secrets` mount there — the worker writes it to a temp file at runtime).
 
 Cookies expire in ~2–3 weeks — re-export when YouTube starts failing again. **Uploads and search are unaffected** — this only touches YouTube fetching.
+
+**Deploying professionally without cookies.** Cookies are a maintenance burden (they rot in weeks, and hammering YouTube from a server can get the *account* flagged, not just the IP) — not something you want on the critical path of a real deployment. The root cause is almost always the **datacenter IP**, not missing cookies, so the durable fixes attack that instead:
+
+- **Residential / rotating proxy** *(most robust, cookie-free)* — set `YT_PROXY_URL=http://user:pass@host:port` to route YouTube traffic through residential IPs. This usually clears bot-checks with **no cookies at all**, and is the standard answer at scale. It's a paid, metered service (billed per GB), so treat it as infrastructure.
+- **Keep `yt-dlp` current** — many "broken YouTube" failures are just the pinned version falling behind YouTube's changes, fixed by upgrading rather than by cookies. The image already installs Node + fetches the signature/PO-token solver automatically (`YT_JS_RUNTIMES`, `YT_REMOTE_COMPONENTS`); keeping the version fresh matters more than cookies for many failures.
+- **Prefer sources you control** — for content you own or can host, **direct uploads** (or import from your own storage) skip YouTube entirely and have none of these problems. Reserve YouTube fetching for demo/seed content, and lean on uploads for anything production-critical.
+- **Official YouTube Data API** — legitimate and stable, but it returns metadata/captions only, **not** downloadable video/frames, so it doesn't cover this app's visual ingest on its own.
+
+Rule of thumb: **cookies for quick local unblocking, a residential proxy for a hands-off production deploy, and uploads for anything you actually control.** There is no fully stable, ToS-clean way to bulk-download arbitrary YouTube video, so budget for either the proxy cost or the cookie/proxy upkeep if YouTube ingest is core to your deployment.
 
 > **Model providers & how to set each in env → [MODELS.md](MODELS.md).**
 >
