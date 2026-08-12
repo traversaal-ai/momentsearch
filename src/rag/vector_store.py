@@ -28,7 +28,7 @@ from qdrant_client.http import models as qm
 from ..config import (
     DEFAULT_USER_ID,
     QDRANT_API_KEY,
-    QDRANT_COLLECTION,
+    IMAGE_COLLECTION,
     QDRANT_HNSW_ON_DISK,
     QDRANT_LOCAL_PATH,
     QDRANT_ON_DISK,
@@ -163,7 +163,7 @@ def _ensure(collection: str, dim: int) -> None:
 
 def ensure_collection() -> None:
     """Visual (frame) collection — dimension comes from IMAGE_EMBED_PROVIDER."""
-    _ensure(QDRANT_COLLECTION, image_dim())
+    _ensure(IMAGE_COLLECTION, image_dim())
 
 
 def ensure_text_collection() -> None:
@@ -178,7 +178,7 @@ def upsert_frames(user_id: str, video_id: str, ids: Iterable[int],
         for idx, vec, payload in zip(ids, vectors, payloads)
     ]
     if points:
-        client().upsert(collection_name=QDRANT_COLLECTION, points=points, wait=True)
+        client().upsert(collection_name=IMAGE_COLLECTION, points=points, wait=True)
 
 
 def search(vector: np.ndarray, user_id: str, *, top_k: int,
@@ -187,7 +187,7 @@ def search(vector: np.ndarray, user_id: str, *, top_k: int,
            include_samples: bool = False) -> list[dict[str, Any]]:
     try:
         hits = client().query_points(
-            collection_name=QDRANT_COLLECTION,
+            collection_name=IMAGE_COLLECTION,
             query=vector.tolist(),
             limit=top_k,
             query_filter=_user_filter(user_id, video_id, video_ids, include_samples),
@@ -279,7 +279,7 @@ def frame_times(user_id: str, video_id: str) -> list[tuple[int, int]]:
     video has no frames."""
     try:
         points, _ = client().scroll(
-            collection_name=QDRANT_COLLECTION,
+            collection_name=IMAGE_COLLECTION,
             scroll_filter=qm.Filter(must=[
                 qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id)),
                 qm.FieldCondition(key="video_id", match=qm.MatchValue(value=video_id)),
@@ -299,7 +299,7 @@ def frame_times(user_id: str, video_id: str) -> list[tuple[int, int]]:
 def delete_video(user_id: str, video_id: str) -> None:
     """Purge a video from BOTH branches (frames + transcript)."""
     sel = qm.FilterSelector(filter=_user_filter(user_id, video_id))
-    for coll in (QDRANT_COLLECTION, TEXT_COLLECTION):
+    for coll in (IMAGE_COLLECTION, TEXT_COLLECTION):
         try:
             client().delete(collection_name=coll, points_selector=sel, wait=True)
         except Exception:
@@ -308,6 +308,6 @@ def delete_video(user_id: str, video_id: str) -> None:
 
 def collection_ready() -> bool:
     try:
-        return client().collection_exists(QDRANT_COLLECTION)
+        return client().collection_exists(IMAGE_COLLECTION)
     except Exception:
         return False

@@ -451,7 +451,13 @@ SEED_STRICT = _envbool("SEED_STRICT", False)
 QDRANT_URL = os.getenv("QDRANT_URL", "").strip()
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "").strip() or os.getenv("QDRANT_TOKEN", "").strip()
 QDRANT_LOCAL_PATH = os.getenv("QDRANT_LOCAL_PATH", str(DATA / "qdrant"))
-QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "moments_l14")
+# Frame (image) collection — pairs with TEXT_COLLECTION. IMAGE_COLLECTION is the
+# current name; QDRANT_COLLECTION is the legacy one from when frames were the only
+# collection. Both env vars are honored (IMAGE_COLLECTION wins), so existing
+# deploys keep working. The VALUE points at your vectors — rename the var freely,
+# never change the value of a live index.
+IMAGE_COLLECTION = _first_env("IMAGE_COLLECTION", "QDRANT_COLLECTION") or "moments_l14"
+QDRANT_COLLECTION = IMAGE_COLLECTION   # legacy alias (constant + env both still work)
 # Low-RAM profile: original vectors on disk, int8-quantized copies pinned in
 # RAM (~4x smaller), HNSW graph on disk; queries rescore against the originals.
 # Frames balloon vector counts fast, so these default ON.

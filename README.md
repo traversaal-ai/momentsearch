@@ -270,148 +270,45 @@ gated — not the vector store.
 
 # Pluggable models
 
-Every model is a **provider name plus a key**. The provider table
+Every model is a **provider name plus a key** — the registry
 ([src/providers/registry.py](src/providers/registry.py)) supplies the endpoint,
-a default model and the vector dimension, so this is a complete configuration:
+default model and vector dimension. So this is a complete configuration:
 
 ```bash
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=...
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
 ```
 
-**Four independently swappable slots**, plus the reranker:
+**Defaults — OpenAI everywhere it can be, Gemini for "who said what":**
 
 | Slot | Env var | Default |
 |---|---|---|
-| Visual embedder | `IMAGE_EMBED_PROVIDER` / `CLIP_MODEL` | local CLIP `clip-ViT-L-14` (dim 768 → `moments_l14`) |
-| Transcript embedder | `TEXT_EMBED_PROVIDER` | OpenAI `text-embedding-3-small` (dim 1536 → `moments_text_openai`) |
-| Answer LLM | `LLM_PROVIDER` | `gpt-4o` |
-| Upload transcription | `ASR_PROVIDER` | Whisper `whisper-1` |
-| Reranker | `RERANK_PROVIDER` | local `ms-marco-MiniLM`, on |
+| Answer LLM | `LLM_PROVIDER` | OpenAI `gpt-4o` |
+| Transcript embeddings | `TEXT_EMBED_PROVIDER` | OpenAI `text-embedding-3-small` |
+| Upload transcription (ASR) | `ASR_PROVIDER` | OpenAI `whisper-1` |
+| Frame embeddings | `IMAGE_EMBED_PROVIDER` | local **CLIP** `clip-ViT-L-14` — *OpenAI has no image embedder* |
+| Reranker | `RERANK_PROVIDER` | local **fastembed** cross-encoder |
+| Speaker recognition ("who said what") | `GEMINI_API_KEY` | **Gemini** `gemini-2.5-flash` |
 
-> **The defaults want one `OPENAI_API_KEY`** — the text embedder, the answer LLM
-> and Whisper are all OpenAI, so one key powers all three. To go keyless: set
-> `TEXT_EMBED_PROVIDER=fastembed` (bge, CPU-local) and `ENABLE_ASR=false`. The
-> visual branch's local CLIP never needed a key, so the whole search path can
-> stay keyless.
+One `OPENAI_API_KEY` powers the answer, transcript embeddings **and** ASR. Add
+`GEMINI_API_KEY` only for speaker recognition. To go fully keyless: set
+`TEXT_EMBED_PROVIDER=fastembed`, `LLM_PROVIDER=ollama` and `ENABLE_ASR=false` —
+the visual branch's local CLIP never needed a key.
 
-## Answer model (`LLM_PROVIDER`)
+📖 **Full model support** — every LLM, embedding, reranker and ASR provider, their
+models, and the exact env vars to set each: **[MODELS.md](MODELS.md)**.
 
-Must be **vision-capable** — it is shown the actual frames.
+**Bring your own model** (per tenant, backend-only): `PUT /api/llm` attaches any
+provider — or your own vLLM / Ollama / LM Studio endpoint via `base_url` — and
+every `/api/ask` answers with it instead of the server default. Only the *LLM* is
+switchable this way (embeddings live in shared collections, so their dimension
+can't vary per request). `curl localhost:8000/api/providers` lists what you can
+attach.
 
-| provider | key env var | default model | notes |
-|---|---|---|---|
-| `openai` **default** | `OPENAI_API_KEY` | `gpt-4o` | also the generic OpenAI-compatible client |
-| `gemini` | `GEMINI_API_KEY` | `gemini-3.6-flash` | native SDK (`pip install google-genai`) |
-| `gemini_openai` | `GEMINI_API_KEY` | `gemini-3.6-flash` | same models, no extra dependency |
-| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` | `pip install anthropic` |
-| `openrouter` | `OPENROUTER_API_KEY` | `openai/gpt-4o-mini` | one key, hundreds of models |
-| `xai` (`grok`) | `XAI_API_KEY` | `grok-4.5` | |
-| `groq` | `GROQ_API_KEY` | — set `LLM_MODEL` | catalogue rotates; no safe default |
-| `together` | `TOGETHER_API_KEY` | `Qwen/Qwen2.5-VL-72B-Instruct` | |
-| `fireworks` | `FIREWORKS_API_KEY` | — set `LLM_MODEL` | |
-| `mistral` | `MISTRAL_API_KEY` | `pixtral-12b-2409` | |
-| `nvidia` | `NVIDIA_API_KEY` | `meta/llama-3.2-11b-vision-instruct` | NIM |
-| `azure_openai` | `AZURE_OPENAI_API_KEY` | — deployment name | `AZURE_OPENAI_ENDPOINT` |
-| `ollama` / `lmstudio` / `vllm` | none | `qwen2.5vl` / — / — | localhost, no key |
-| `custom` | optional | — | any OpenAI-compatible server via `LLM_BASE_URL` |
-
-Most of these share **one** adapter, because most of the industry speaks the
-OpenAI Chat Completions dialect — they differ only by `base_url`. Adding a
-provider that speaks a known dialect is a row in a table, not new code. Unknown
-names fall back to the generic client, so a provider that launched last week
-works today with `LLM_BASE_URL` alone.
-
-## Embeddings — two independent branches
-
-They fuse by *rank*, never by score, so mixing is fine: local CLIP frames plus
-hosted Gemini transcripts is a sensible setup.
-
-**Visual** (`IMAGE_EMBED_PROVIDER`) — frames *and* the question, one space:
-
-| provider | default model | dim (truncatable to) | key | install |
-|---|---|---|---|---|
-| `clip` **default** | `clip-ViT-L-14` | 768 | none — offline | sentence-transformers |
-| `jina` | `jina-clip-v2` | 1024 (64–1024) | `JINA_API_KEY` | **nothing** |
-| `cohere` | `embed-v4.0` | 1536 (256–1536) | `COHERE_API_KEY` | **nothing** |
-| `voyage` | `voyage-multimodal-3.5` | 1024 (256–2048) | `VOYAGE_API_KEY` | **nothing** |
-| `gemini` | `gemini-embedding-2` | 1536 (128–3072) | `GEMINI_API_KEY` | `google-genai` |
-
-This branch needs a **joint** image+text space — search is text→image, so the
-model must embed both into the *same* space. That's why OpenAI isn't an option
-here (no image-embedding model). Jina, Cohere and Voyage need no SDK at all —
-those adapters are plain HTTPS from the standard library.
-
-**Transcript** (`TEXT_EMBED_PROVIDER`) — caption chunks:
-
-| provider | default model | dim | key | install |
-|---|---|---|---|---|
-| `openai` **default** | `text-embedding-3-small` | 1536 | `OPENAI_API_KEY` (falls back to `LLM_API_KEY`) | `openai` |
-| `fastembed` | `BAAI/bge-small-en-v1.5` | 384 | none — offline (the keyless escape hatch) | fastembed |
-| `gemini` | `gemini-embedding-2` | 1536 | `GEMINI_API_KEY` | `google-genai` |
-| `cohere` | `embed-v4.0` | 1536 | `COHERE_API_KEY` | **nothing** |
-| `voyage` | `voyage-3.5` | 1024 | `VOYAGE_API_KEY` | **nothing** |
-| `jina` | `jina-embeddings-v3` | 1024 | `JINA_API_KEY` | **nothing** |
-
-Per-branch overrides: `IMAGE_EMBED_MODEL` / `_DIM` / `_API_KEY` / `_BASE_URL` /
-`_BATCH` / `_CONCURRENCY`, and the same six with `TEXT_EMBED_`. `*_BASE_URL`
-points the `openai` text embedder at your own vLLM/TEI server; `*_DIM` is
-required for a model the registry doesn't list. `CLIP_MODEL` / `CLIP_DIM` /
-`CLIP_BATCH` / `CLIP_SERVICE_URL` still work as aliases.
-
-**Cost note.** A video is hundreds of frames, so per-frame price and latency
-multiply fast. Local CLIP is free and the default for a reason. Among the hosted
-ones, Jina/Cohere/Voyage take many images per request; **Gemini takes one image
-per call** (~9s each, and it appears to serialize per key), so keep it for small
-corpora or pair it with a higher `FRAME_INTERVAL_SEC` / lower `MAX_FRAMES`. The
-transcript branch is cheap everywhere — a few dozen chunks, not hundreds of
-frames.
-
-## Two things that will bite you
-
-- **Dimensions must match between indexing and querying.** Switching provider or
-  model changes the vector size, which makes the existing index unusable. Qdrant
-  collection creation **refuses** to reuse a collection whose vector size
-  disagrees with the configured embedder, and tells you to re-index or restore
-  the old setting — rather than failing mid-ingest or silently comparing vectors
-  from two unrelated spaces.
-- **Confidence thresholds are model-specific.** `CONFIDENCE_THRESHOLD=0.2` is
-  calibrated for CLIP's text→image cosines (~0.2-0.35); a different embedder on
-  another scale would over-abstain. Defaults come from the chosen provider's
-  preset, and uncalibrated providers default to **0 = gate off**, the safe
-  direction. Measure yours with [benchmark/score.py](benchmark/score.py) before
-  pinning a value.
-
-## Bring your own model
-
-Which model writes the answer is resolved in this order:
-
-1. **An attached model** — saved via `PUT /api/llm` (**backend-only, not in the
-   UI**): any provider above with its own key, or your own vLLM / Ollama /
-   LM Studio endpoint via `base_url`. Must be vision-capable. Only the *LLM* is
-   switchable this way — embeddings live in shared collections, so their
-   dimension can't vary per request.
-2. **The server default** — the `LLM_*` env config.
-3. **No model** — retrieval still works; the answer degrades to an honest
-   visual-similarity summary and `llm_used: false`.
-
-```bash
-curl localhost:8000/api/providers          # what can I attach?
-
-curl -X PUT localhost:8000/api/llm -H "Content-Type: application/json" \
-  -d '{"provider":"openai","model":"Qwen/Qwen2.5-VL-7B-Instruct",
-       "base_url":"http://my-vllm-host:8000/v1"}'
-
-curl -X POST localhost:8000/api/llm/test   # sends one tiny image through it
-curl -X DELETE localhost:8000/api/llm      # back to the server default
-```
-
-Settings live in Postgres (`ms_user_llms`); API keys are write-only (masked on
-read, blank on update keeps the stored key). Bad configs are rejected at `PUT`
-time with the fix named ("no API key. Set `XAI_API_KEY`"), not at answer time.
-
-> **Ops note:** user `base_url`s make your API box call user-chosen hosts. On a
-> hosted deployment, egress-restrict the API container or allowlist hosts.
+> Switching an embedding provider or model changes the vector dimension, which
+> makes the old index unusable — MomentSearch refuses to mix them. Point that
+> branch's collection (`IMAGE_COLLECTION` / `TEXT_COLLECTION`) at a fresh name and
+> re-index. Confidence thresholds are model-specific too — see [MODELS.md](MODELS.md).
 
 ---
 
@@ -633,6 +530,12 @@ uses Google's SDK with a service-account JSON.
 > ⚠️ **Browser uploads need a CORS rule** allowing PUT from your site's origin,
 > or presigned uploads fail. Keep the bucket **private** — only presigned URLs
 > get in or out. See `.env.example` for the exact commands.
+
+📖 **Configuring the bucket + keys** — creating the bucket, the IAM key /
+service-account, and the CORS rule, step by step per cloud — is in the deployment
+guides: **[AWS / S3](deployment_docs/aws.md#s3-bucket)** ·
+**[GCP / GCS](deployment_docs/gcp.md#gcs-bucket)** ·
+**[Fly / Tigris](deployment_docs/fly.md#object-storage-bucket)**.
 
 ---
 
