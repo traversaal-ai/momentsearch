@@ -12,6 +12,8 @@ env/
 .env.*
 !.env.example
 !.env.local.example
+# Local secret files (YouTube cookies etc.) — mounted into containers, never committed
+secrets/
 
 # Runtime data (videos, extracted frames, qdrant storage)
 data/

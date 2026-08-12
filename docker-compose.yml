@@ -107,6 +107,7 @@ services:
       - ./src:/app/src            # live code — re-runs current seed logic on each `up`
       - ./.env:/app/.env:ro       # so load_dotenv() works in any subprocess (see config.py)
       - ./data:/app/data
+      - ./secrets:/app/secrets:ro # YouTube cookies etc. — kept out of ./data (storage tree)
       - hf_cache:/root/.cache
     depends_on:
       clip:
@@ -161,6 +162,7 @@ services:
       - ./src:/app/src            # live code — restart the worker to pick up changes
       - ./.env:/app/.env:ro       # so load_dotenv() works in the Prefect flow subprocess (see config.py)
       - ./data:/app/data
+      - ./secrets:/app/secrets:ro # YouTube cookies etc. — kept out of ./data (storage tree)
       - hf_cache:/root/.cache
     depends_on:
       clip:
