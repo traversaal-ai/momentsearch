@@ -67,29 +67,30 @@ If it prints your email, you're logged in. That's the whole login.
 
 App names have to be unique on Fly, so `momentsearch` is taken. Pick your own, like `momentsearch-yourname`.
 
-Open the file `fly.toml`, find the top line that says:
+Run these two lines. The first saves your name; the second writes it into `fly.toml` for you (no manual editing):
 
-```toml
-app = 'momentsearch'
+```powershell
+$APP = "momentsearch-yourname"     # <- change to your own name
+(Get-Content fly.toml) -replace "^app = .*", "app = '$APP'" | Set-Content fly.toml
 ```
 
-Change it to your name:
+Check it worked:
 
-```toml
-app = 'momentsearch-yourname'
+```powershell
+Select-String '^app =' fly.toml    # should show: app = 'momentsearch-yourname'
 ```
 
-Save the file. (Pick the name once — you can't rename it later.)
+Keep this window open — the next steps reuse `$APP`. (Pick the name once; you can't rename it later.)
 
 ---
 
 ## Step 4 — Create the app
 
 ```powershell
-fly apps create momentsearch-yourname --org personal
+fly apps create $APP --org personal
 ```
 
-Use the **same name** you put in `fly.toml`.
+(This uses the `$APP` name from Step 3.)
 
 ---
 
@@ -98,7 +99,7 @@ Use the **same name** you put in `fly.toml`.
 This is where uploaded videos and thumbnails are stored. One command makes the bucket **and** sets up its keys for you — you don't create any keys by hand:
 
 ```powershell
-fly storage create --name momentsearch-yourname-media
+fly storage create --name "$APP-media"
 ```
 
 Then turn it on:
@@ -121,10 +122,16 @@ Browser uploads need one setting turned on, or uploading a video will fail. Open
 fly storage dashboard
 ```
 
+First print your app's web address (you'll paste it in a second):
+
+```powershell
+echo "https://$APP.fly.dev"
+```
+
 In the page that opens: click your bucket → **Settings** → **CORS**. Add a rule that allows:
 
 - Methods: **PUT** and **GET**
-- Origin: **`https://momentsearch-yourname.fly.dev`** (your app's web address)
+- Origin: the address you just printed (like `https://momentsearch-yourname.fly.dev`)
 - Headers: **all** (`*`)
 - Expose header: **ETag**
 
