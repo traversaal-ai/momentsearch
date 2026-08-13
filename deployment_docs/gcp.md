@@ -1,6 +1,6 @@
 # Deploying MomentSearch to Google Cloud (GCP)
 
-Same one Docker image as on Fly (`api`/`worker`/`clip`/`seed` entrypoints) — only the **compute**, `EMBED_SERVICE_URL` (no Fly auto-derive), and `STORAGE_PROVIDER=gcp_native` differ.
+Same one Docker image as on Fly (`api`/`worker`/`clip`/`seed` entrypoints) — only the **compute**, `EMBED_SERVICE_URL` (no Fly auto-derive), and the **storage provider** differ — GCS is the natural pick here, though S3 and Tigris work unchanged ([Object storage](#object-storage)).
 
 ## What you need
 
@@ -8,7 +8,7 @@ Same one Docker image as on Fly (`api`/`worker`/`clip`/`seed` entrypoints) — o
 - `QDRANT_URL` + `QDRANT_API_KEY` — Qdrant Cloud (collections `moments_l14`, `moments_text_openai` auto-created).
 - `PREFECT_API_URL` + `PREFECT_API_KEY` — Prefect Cloud (worker polls outbound, no inbound ports).
 - `OPENAI_API_KEY` — answer model, transcript embeddings, Whisper ASR (`TEXT_EMBED_PROVIDER=fastembed` for keyless transcripts).
-- `STORAGE_PROVIDER=gcp_native` + `GOOGLE_CLOUD_*` (service-account JSON) + `STORAGE_BUCKET` — see [GCS bucket](#gcs-bucket).
+- **Object storage** — one private bucket for videos, thumbnails and transcripts. **GCS** (`STORAGE_PROVIDER=gcp_native` + `GOOGLE_CLOUD_*` + `STORAGE_BUCKET`) is the natural fit here; **S3** and **Tigris** are equally supported. See [Object storage](#object-storage).
 - `EMBED_SERVICE_URL` — **must set explicitly off Fly**, or api/worker can't embed.
 - `DEPLOY_ENV=production` — arms the preflight (`src/preflight.py`).
 - Optional: `GEMINI_API_KEY` (speaker recognition), `YT_COOKIES_B64` (YouTube ingest; datacenter IPs are bot-checked).
@@ -208,31 +208,125 @@ gcloud run deploy momentsearch-api --image=$REPO/momentsearch:latest \
   --set-env-vars=STORAGE_PROVIDER=gcp_native,DEPLOY_ENV=production,EMBED_SERVICE_URL=https://clip.your-domain:8001
 ```
 
-## GCS bucket
+## Object storage
 
-`gcp_native` uses the Google SDK with a service-account JSON exploded into `GOOGLE_CLOUD_*`.
+Uploaded videos, frame thumbnails and transcript JSON live in **one private bucket**,
+keyed `{user_id}/{video_id}/` ([`src/storage.py`](../src/storage.py)). The browser PUTs
+straight to the bucket with a presigned URL and reads thumbnails/playback with presigned
+GETs — bytes never pass through the API.
+
+### Pick a provider
+
+All three are fully supported and identical at runtime; choose on where your
+infrastructure already lives. GCS is the obvious pick on GCP (same project, same IAM, no
+egress), not a technically better one.
+
+| Provider | `STORAGE_PROVIDER` | Setup | Notes on GCP |
+|---|---|---|---|
+| **GCS** | `gcp_native` | bucket + service account | Native. Google SDK + SA key; no HMAC keys. |
+| **GCS over S3** | `gcp` | bucket + HMAC key pair | Same bucket, S3 protocol — two credentials instead of seven env vars. |
+| **S3** | `aws` | bucket + IAM user | Works fine; cross-cloud egress applies. Setup: [aws.md → Object storage](aws.md#object-storage). |
+| **Tigris** | `flyio` | one command on Fly | Easiest if you already run a Fly app; usable from GCP with the `tid_`/`tsec_` keys. Setup: [fly.md → Object storage](fly.md#object-storage). |
+
+For S3 or Tigris on GCP, set that provider's vars from the linked section instead of the
+`GOOGLE_CLOUD_*` ones below — nothing else about this deploy changes.
+`STORAGE_PROVIDER=local` is dev-only (no presigning, and GKE pods don't share a disk); the
+preflight check flags it when `DEPLOY_ENV` is set.
+
+### GCS (`STORAGE_PROVIDER=gcp_native`)
+
+Google's SDK with a service-account JSON exploded into `GOOGLE_CLOUD_*` env vars.
+
+**1. Bucket + service account + key:**
 
 ```bash
-gcloud storage buckets create gs://momentsearch-media --location=us-central1
+gcloud storage buckets create gs://momentsearch-media \
+  --location=us-central1 \
+  --uniform-bucket-level-access \
+  --public-access-prevention
+
 gcloud iam service-accounts create momentsearch-storage
+
+# Object admin on THIS bucket only — read, write, delete, list. Not project-wide.
 gcloud storage buckets add-iam-policy-binding gs://momentsearch-media \
   --member=serviceAccount:momentsearch-storage@your-project.iam.gserviceaccount.com \
   --role=roles/storage.objectAdmin
+
 gcloud iam service-accounts keys create key.json \
   --iam-account=momentsearch-storage@your-project.iam.gserviceaccount.com
 ```
 
-Map `key.json` fields → env: `project_id`→`GOOGLE_CLOUD_PROJECT_ID`, `private_key_id`→`GOOGLE_CLOUD_PRIVATE_KEY_ID`, `private_key`→`GOOGLE_CLOUD_PRIVATE_KEY`, `client_email`→`GOOGLE_CLOUD_CLIENT_EMAIL`, `client_id`→`GOOGLE_CLOUD_CLIENT_ID`, `client_x509_cert_url`→`GOOGLE_CLOUD_CLIENT_X509_CERT_URL`; plus `STORAGE_BUCKET=momentsearch-media`.
+`--public-access-prevention` is what keeps the bucket private for good; presigned URLs
+are the only way in or out. `objectAdmin` is the minimum that covers all six operations
+the app performs (put, get, head, list-by-prefix, delete, delete-prefix) — `objectViewer`
+breaks uploads, `admin` is more than needed.
 
-CORS for browser uploads (presigned `PUT`s from the browser). Keep the bucket private — reads use presigned GET:
+**2. Map `key.json` → env vars:**
+
+| `key.json` field | Env var |
+|---|---|
+| `project_id` | `GOOGLE_CLOUD_PROJECT_ID` |
+| `private_key_id` | `GOOGLE_CLOUD_PRIVATE_KEY_ID` |
+| `private_key` | `GOOGLE_CLOUD_PRIVATE_KEY` |
+| `client_email` | `GOOGLE_CLOUD_CLIENT_EMAIL` |
+| `client_id` | `GOOGLE_CLOUD_CLIENT_ID` |
+| `client_x509_cert_url` | `GOOGLE_CLOUD_CLIENT_X509_CERT_URL` |
+
+Plus `STORAGE_PROVIDER=gcp_native` and `STORAGE_BUCKET=momentsearch-media`. Keep
+`GOOGLE_CLOUD_PRIVATE_KEY` **quoted with literal `\n`** exactly as it appears in the JSON
+— `config.py` un-escapes them and strips stray surrounding quotes, so the same value works
+in `.env`, a `kubectl` secret, and `fly secrets`
+([`config.py:113-122`](../src/config.py#L113-L122)). A real multi-line PEM in a dotenv file
+is the single most common cause of "could not deserialize key data" on boot.
+
+Signing happens locally with that private key, so no extra IAM role is needed to mint
+presigned URLs — but the SA still needs write access for the PUT the URL authorizes.
+
+**3. CORS — required, or every browser upload fails.** The presigned `PUT` is
+cross-origin from your page to `storage.googleapis.com`:
 
 ```bash
 cat > cors.json <<'EOF'
-[{ "origin": ["https://your-momentsearch-domain"], "method": ["PUT", "GET"],
-   "responseHeader": ["Content-Type"], "maxAgeSeconds": 3600 }]
+[{ "origin": ["https://your-momentsearch-domain", "http://localhost:8000"],
+   "method": ["PUT", "GET"],
+   "responseHeader": ["Content-Type"],
+   "maxAgeSeconds": 3600 }]
 EOF
 gcloud storage buckets update gs://momentsearch-media --cors-file=cors.json
+gcloud storage buckets describe gs://momentsearch-media --format="default(cors_config)"
 ```
+
+`origin` must match the serving origin exactly — scheme + host + port, no trailing slash.
+List every origin you serve from.
+
+**4. Verify the round trip** before blaming the worker for a stuck upload — this exercises
+the real code path (credentials, bucket, presigning):
+
+```bash
+docker compose exec api python -c "from src import storage as s; k='_selftest/probe.txt'; print(s.put_bytes(k,b'ok','text/plain')); print(s.head(k)); print(s.presign_get(k)[:90]); s.delete_key(k); print('storage OK')"
+# GKE: kubectl exec deploy/api -- python -c "...same..."
+```
+
+CORS isn't covered by that check (browser-only rule) — confirm it by uploading a small
+video through the UI.
+
+### GCS over the S3 API (`STORAGE_PROVIDER=gcp`)
+
+Same bucket, reached through Google's S3-interoperability endpoint
+(`https://storage.googleapis.com`) with an HMAC key pair — two secrets instead of the
+seven `GOOGLE_CLOUD_*` vars, and it drops the `google-cloud-storage` dependency from the
+path. Create the key under **Cloud Storage → Settings → Interoperability → Create a key
+for a service account** (the same `momentsearch-storage` SA), then:
+
+```dotenv
+STORAGE_PROVIDER=gcp
+STORAGE_BUCKET=momentsearch-media
+STORAGE_ACCESS_KEY_ID=GOOG1E...
+STORAGE_SECRET_ACCESS_KEY=...
+```
+
+Bucket creation, IAM and the CORS rule above are identical — only the credential type
+changes.
 
 ## GPU CLIP (optional)
 
@@ -241,6 +335,10 @@ For large backfills, run clip on GPU: build the `Dockerfile.clip` GPU image (`--
 ## Troubleshooting
 
 - **clip unreachable / can't embed** → set `EMBED_SERVICE_URL` (no Fly auto-derive): `http://clip:8001` on compose, the clip Service name on GKE, or the clip URL on Cloud Run.
-- **Browser uploads fail** (CORS error) → add the GCS bucket CORS rule for `PUT`/`GET` from your origin.
+- **Browser uploads fail** (CORS error) → add the bucket CORS rule for `PUT`/`GET` from your origin ([Object storage](#object-storage)); `origin` must match scheme + host + port exactly.
+- **Boot fails on "could not deserialize key data" / invalid PEM** → `GOOGLE_CLOUD_PRIVATE_KEY` was pasted as a real multi-line value. Keep it one line, quoted, with literal `\n`.
+- **`403 does not have storage.objects.create`** → the SA is bound to the project but not the bucket, or has `objectViewer`. Re-run the `add-iam-policy-binding` with `roles/storage.objectAdmin` on the bucket.
+- **Thumbnails 404 / delete leaves objects** → prefix listing needs list permission on the bucket; `objectAdmin` on the *bucket* (not just objects inherited from elsewhere) covers it.
+- **Uploads vanish or `worker` can't find the file** → `STORAGE_PROVIDER` is still `local`; GKE pods and the API don't share a disk.
 - **YouTube ingest fails** → datacenter IPs are bot-checked; supply `YT_COOKIES_B64` (expires in ~2–3 weeks).
 - **Preflight not warning** → it only runs when `DEPLOY_ENV` is production/staging; set `DEPLOY_ENV=production` (add `STRICT_DEPLOY_CHECK=true` to abort).

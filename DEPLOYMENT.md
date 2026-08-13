@@ -22,7 +22,15 @@ Qdrant, Prefect, object storage). Moving between clouds changes only:
 |---|---|---|
 | **Compute** | `fly deploy` (`fly.toml`) | ECS/GKE, or a VM + `docker compose` |
 | **Clip address** | auto-derived from `FLY_APP_NAME` | **set `EMBED_SERVICE_URL` explicitly** (e.g. `http://clip:8001`) |
-| **Storage** | `flyio` (Tigris) | `aws` + S3, or `gcp_native` + GCS |
+| **Storage** | `flyio` (Tigris) — one command | `aws` + S3, or `gcp_native` + GCS |
+
+Storage is a **free choice, not a platform constraint**: Tigris, GCS and S3 are all
+first-class and any of them runs on any target. The column above is just the
+path of least resistance per cloud. Each guide's **Object storage** section
+([Fly](deployment_docs/fly.md#object-storage) ·
+[AWS](deployment_docs/aws.md#object-storage) ·
+[GCP](deployment_docs/gcp.md#object-storage)) documents all three, with the
+bucket, credential and **CORS** steps that browser uploads need.
 
 Everything else — `DATABASE_URL`, `QDRANT_URL`, `PREFECT_*`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY` — is the same env everywhere (just URLs/keys reachable from

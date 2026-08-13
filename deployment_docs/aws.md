@@ -1,6 +1,6 @@
 # Deploying MomentSearch to AWS
 
-Same Docker image as Fly (four entrypoints: `api`, `worker`, `clip`, `seed`); only **compute**, **`EMBED_SERVICE_URL`** (no auto-derive off Fly — set it), and **`STORAGE_PROVIDER=aws`** (S3 instead of GCS/Tigris) change.
+Same Docker image as Fly (four entrypoints: `api`, `worker`, `clip`, `seed`); only **compute**, **`EMBED_SERVICE_URL`** (no auto-derive off Fly — set it), and the **storage provider** change — S3 is the natural pick here, though GCS and Tigris work unchanged ([Object storage](#object-storage)).
 
 ## What you need
 
@@ -8,7 +8,7 @@ Same Docker image as Fly (four entrypoints: `api`, `worker`, `clip`, `seed`); on
 - `QDRANT_URL` + `QDRANT_API_KEY` — Qdrant Cloud (or self-host). Collections `moments_l14` + `moments_text_openai` auto-create.
 - `PREFECT_API_URL` + `PREFECT_API_KEY` — Prefect Cloud (worker polls outbound, no inbound ports).
 - `OPENAI_API_KEY` — answer model, transcript embeddings, Whisper. (Set `TEXT_EMBED_PROVIDER=fastembed` to drop it for the text branch.)
-- `STORAGE_PROVIDER=aws` + `STORAGE_BUCKET` + `STORAGE_REGION` + `STORAGE_ACCESS_KEY_ID` + `STORAGE_SECRET_ACCESS_KEY` — S3.
+- **Object storage** — one private bucket for videos, thumbnails and transcripts. **S3** (`STORAGE_PROVIDER=aws`) is the natural fit here, but **GCS** and **Tigris** are equally supported. See [Object storage](#object-storage).
 - `EMBED_SERVICE_URL` — **must set off Fly** (`http://clip:8001` on one box; clip internal DNS on ECS).
 - `DEPLOY_ENV=production` — arms the preflight local-settings check (`STRICT_DEPLOY_CHECK=true` to abort instead of warn).
 - Optional: `GEMINI_API_KEY` (speaker recognition); `YT_COOKIES_B64` (YouTube — datacenter IPs are bot-checked).
@@ -159,7 +159,33 @@ aws ecs run-task \
 
 Scale ingest: `aws ecs update-service --cluster momentsearch --service worker --desired-count 3` (0 when idle).
 
-## S3 bucket
+## Object storage
+
+Uploaded videos, frame thumbnails and transcript JSON live in **one private bucket**,
+keyed `{user_id}/{video_id}/` ([`src/storage.py`](../src/storage.py)). The browser PUTs
+straight to the bucket with a presigned URL and reads thumbnails/playback with presigned
+GETs — bytes never pass through the API.
+
+### Pick a provider
+
+All three are fully supported and identical at runtime; choose on where your
+infrastructure already lives. S3 is the obvious pick on AWS (task-role auth, no extra
+vendor), not a technically better one.
+
+| Provider | `STORAGE_PROVIDER` | Setup | Notes on AWS |
+|---|---|---|---|
+| **S3** | `aws` | bucket + IAM user/role | Native. ECS task role means **no static keys** at all. |
+| **GCS** | `gcp_native` | GCP project + service account | Works fine; cross-cloud egress applies. Setup: [gcp.md → Object storage](gcp.md#object-storage). |
+| **Tigris** | `flyio` | one command on Fly | Easiest if you already run a Fly app; usable from AWS with the `tid_`/`tsec_` keys. Setup: [fly.md → Object storage](fly.md#object-storage). |
+
+For GCS or Tigris on AWS, set that provider's vars from the linked section instead of
+the `STORAGE_*` S3 ones below — nothing else about this deploy changes.
+`STORAGE_PROVIDER=local` is dev-only (no presigning, EC2/Fargate disks aren't shared or
+durable) and the preflight check flags it when `DEPLOY_ENV` is set.
+
+### S3 (`STORAGE_PROVIDER=aws`)
+
+**1. Create a private bucket:**
 
 ```bash
 aws s3api create-bucket --bucket momentsearch-media --region us-east-1
@@ -168,9 +194,42 @@ aws s3api put-public-access-block --bucket momentsearch-media \
   --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 ```
 
-Keep it private (access via presigned URLs). IAM policy actions: `s3:PutObject`, `s3:GetObject`, `s3:HeadObject`, `s3:DeleteObject` on `arn:aws:s3:::momentsearch-media/*`, plus `s3:ListBucket` on the bucket. Attach to an IAM user (keys → `STORAGE_ACCESS_KEY_ID`/`STORAGE_SECRET_ACCESS_KEY`) or the ECS task role.
+Keep it private — presigned URLs are the only way in or out.
 
-CORS (required for browser presigned-PUT uploads):
+**2. Grant access.** Policy actions: `s3:PutObject`, `s3:GetObject`, `s3:HeadObject`,
+`s3:DeleteObject` on `arn:aws:s3:::momentsearch-media/*`, plus `s3:ListBucket` on the
+bucket itself (prefix listing drives the per-video delete).
+
+```bash
+cat > s3-policy.json <<'EOF'
+{ "Version": "2012-10-17", "Statement": [
+  { "Effect": "Allow",
+    "Action": ["s3:PutObject","s3:GetObject","s3:DeleteObject"],
+    "Resource": "arn:aws:s3:::momentsearch-media/*" },
+  { "Effect": "Allow", "Action": ["s3:ListBucket"],
+    "Resource": "arn:aws:s3:::momentsearch-media" }
+]}
+EOF
+aws iam create-policy --policy-name momentsearch-s3 --policy-document file://s3-policy.json
+```
+
+(`s3:HeadObject` isn't a real IAM action — `s3:GetObject` covers HEAD.) Attach it to the
+**ECS task role** (Path B — no static keys needed, boto3 picks up the role) or to an IAM
+user whose access key you set as `STORAGE_ACCESS_KEY_ID`/`STORAGE_SECRET_ACCESS_KEY`
+(Path A — EC2 can also use an instance profile and skip the keys).
+
+**3. Set the env vars:**
+
+```dotenv
+STORAGE_PROVIDER=aws
+STORAGE_BUCKET=momentsearch-media
+STORAGE_REGION=us-east-1          # the bucket's REAL region, not `auto`
+STORAGE_ACCESS_KEY_ID=AKIA...     # omit both if using a task role / instance profile
+STORAGE_SECRET_ACCESS_KEY=...
+```
+
+**4. CORS — required, or every browser upload fails.** The presigned `PUT` is
+cross-origin from your page to `s3.amazonaws.com`:
 
 ```bash
 aws s3api put-bucket-cors --bucket momentsearch-media --cors-configuration '{
@@ -186,6 +245,21 @@ aws s3api put-bucket-cors --bucket momentsearch-media --cors-configuration '{
 }'
 ```
 
+`AllowedOrigins` must match the serving origin exactly — scheme + host + port, no
+trailing slash. Add every origin you serve from (ALB domain, custom domain,
+`http://localhost:8000` if local dev shares the bucket).
+
+**5. Verify the round trip** before blaming the worker for a stuck upload — this
+exercises the real code path (credentials, bucket, presigning):
+
+```bash
+docker compose exec api python -c "from src import storage as s; k='_selftest/probe.txt'; print(s.put_bytes(k,b'ok','text/plain')); print(s.head(k)); print(s.presign_get(k)[:90]); s.delete_key(k); print('storage OK')"
+# ECS: aws ecs run-task ... --overrides '{"containerOverrides":[{"name":"api","command":["python","-c","..."]}]}'
+```
+
+CORS isn't covered by that check (it's a browser-only rule) — confirm it by uploading a
+small video through the UI.
+
 ## GPU CLIP (optional)
 
 Run the clip service on a GPU EC2 (`g4dn`/`g5`) with the `Dockerfile.clip` GPU build and point `EMBED_SERVICE_URL` at it — nothing else changes.
@@ -200,7 +274,10 @@ If public/cross-network, secure with `EMBED_SERVICE_TOKEN` (same value on clip +
 ## Troubleshooting
 
 - **clip unreachable / can't embed** → set `EMBED_SERVICE_URL` (`http://clip:8001` one box, Cloud Map DNS on ECS); mandatory on slim.
-- **Browser uploads fail (CORS)** → add S3 CORS rule; `AllowedOrigins` must match the exact serving origin.
+- **Browser uploads fail (CORS)** → add the bucket CORS rule ([Object storage](#object-storage)); `AllowedOrigins` must match the exact serving origin.
+- **`SignatureDoesNotMatch` / `PermanentRedirect` / 301 on upload** → `STORAGE_REGION` isn't the bucket's real region. `aws s3api get-bucket-location --bucket <name>` tells you it (`null` means `us-east-1`).
+- **`AccessDenied` on delete or thumbnail load** → the policy is missing `s3:ListBucket` on the bucket ARN (needed for prefix listing) or `s3:DeleteObject` on `/*`.
+- **Uploads land nowhere / vanish on restart** → `STORAGE_PROVIDER` is still `local`; container disks aren't shared between `api` and `worker`, or durable.
 - **YouTube ingest fails** → provide `YT_COOKIES_B64` (ECS) or mounted `YT_COOKIES_FILE` (EC2); cookies expire in ~2–3 weeks.
 - **Preflight warns about LOCAL settings** → a local `.env` leaked in; fix the flagged settings. Check fires only when `DEPLOY_ENV` is set.
 - **`/demo` empty** → best-effort seeding skipped indexing (usually missing cookies); set cookies + re-run seed, or `SEED_SAMPLE_VIDEOS=false`.
