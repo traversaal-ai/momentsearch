@@ -166,13 +166,14 @@ function renderSetup(s){
 
   const bar=$("#setupBar");
   if(blocking.length){
-    const sig=blocking.map(i=>i.id).sort().join(",");
     $("#setupBarMsg").textContent = blocking.length===1
       ? `${blocking[0].feature} — set ${blocking[0].env.join(" + ")} to fix it`
       : `${blocking.length} things still need setup to unlock everything`;
-    bar.dataset.sig=sig;
-    // Stay hidden only if the user already dismissed THIS exact set of gaps.
-    bar.classList.toggle("hidden", localStorage.getItem("ms_setup_dismissed")===sig);
+    // Always show while a blocking gap exists. ✕ only clears it for THIS view — it
+    // returns on the next load, on purpose: a real "ingest is off" problem must not
+    // be permanently dismissable, or you'd hide it once and forget the missing key.
+    // The always-on pill (above) is the quiet persistent home; this is the nudge.
+    bar.classList.remove("hidden");
   } else {
     bar.classList.add("hidden");
   }
@@ -189,8 +190,9 @@ function renderSetup(s){
   document.addEventListener("keydown", e=>{ if(e.key==="Escape") close(); });
   const fix=$("#setupBarFix"); if(fix) fix.onclick=e=>{ e.stopPropagation(); open(); };
   const x=$("#setupBarClose");
-  if(x) x.onclick=()=>{ const bar=$("#setupBar");
-    localStorage.setItem("ms_setup_dismissed", bar.dataset.sig||"1"); bar.classList.add("hidden"); };
+  // Clear it for now only — no persistence, so it's back on the next load while the
+  // gap remains (the pill stays visible the whole time regardless).
+  if(x) x.onclick=()=>{ $("#setupBar").classList.add("hidden"); };
 })();
 
 /* ---------- boot ----------
