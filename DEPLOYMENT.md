@@ -7,7 +7,7 @@ anywhere Docker runs. Pick your target:
 
 | Guide | For |
 |---|---|
-| **[Fly.io](deployment_docs/fly.md)** | the default / reference deploy (`fly deploy`, `fly.toml`) |
+| **[Fly.io](deployment_docs/fly.md)** | the default / reference deploy — token-authenticated `flyctl`, `fly.toml`. Set your own **globally unique app name** in `fly.toml` first (`momentsearch` is taken). |
 | **[AWS](deployment_docs/aws.md)** | one EC2 + `docker compose`, or ECS/Fargate (fat & slim) |
 | **[Google Cloud](deployment_docs/gcp.md)** | one GCE VM + `docker compose`, or GKE / Cloud Run (fat & slim) |
 

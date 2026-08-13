@@ -5,11 +5,17 @@
 # Bucket: `fly storage create` provisions Tigris and injects the AWS_* secrets
 # automatically — then just `fly secrets set STORAGE_PROVIDER=flyio`.
 #
-# fly launch --no-deploy --copy-config
+# Deploy is token-only (no browser login) — $env:FLY_API_TOKEN from .env's
+# FLY_IO_TOKEN, then:
+# fly apps create <your-app> --org personal      # name must match `app =` below
 # Get-Content .env | Where-Object { $_ -match '^[A-Z_]+=.+' -and $_ -notmatch '^FLY_' } | fly secrets import
 # fly deploy --ha=false
 # fly scale count worker=2        # more ingest throughput, anytime
+# Full walkthrough: deployment_docs/fly.md
 
+# CHANGE THIS. Fly app names are globally unique, so 'momentsearch' is taken —
+# use your own (e.g. momentsearch-<you>) and create the app under that name.
+# This is the ONLY place the name appears; everything else derives from it.
 app = 'momentsearch'
 primary_region = 'iad'
 

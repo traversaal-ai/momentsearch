@@ -11,7 +11,8 @@ Deploys **one Docker image** as **three process groups** (`api`, `worker`, `clip
 - **Object storage** — one private bucket for videos, thumbnails and transcripts. Three supported choices, all first-class: **Tigris** (`flyio`), **GCS** (`gcp_native`), **S3** (`aws`). See [Object storage](#object-storage)
 - `GEMINI_API_KEY` — *optional*, speaker recognition
 - `YT_COOKIES_B64` — *optional*, YouTube ingest (Fly datacenter IP is bot-checked)
-- A **Fly.io account** + `flyctl` CLI
+- A **Fly.io account**, the `flyctl` CLI, and a **Fly API token** in `.env` as `FLY_IO_TOKEN` — the whole deploy is token-based, no browser login ([Deploy step 2](#2-authenticate-with-a-token-not-fly-auth-login))
+- A **globally unique app name** in `fly.toml` — `momentsearch` is taken ([Deploy step 3](#3-choose-your-app-name-and-where-to-change-it))
 
 ## Object storage
 
@@ -185,7 +186,8 @@ Storage failures otherwise surface late — as a stuck upload or a blank thumbna
 round trip through the real code path proves credentials, bucket, and presigning:
 
 ```powershell
-fly ssh console
+fly ssh console        # you land in /app on a running machine
+# then, inside the machine:
 python -c "from src import storage as s; k='_selftest/probe.txt'; print(s.put_bytes(k,b'ok','text/plain')); print(s.head(k)); print(s.presign_get(k)[:90]); s.delete_key(k); print('storage OK')"
 ```
 
@@ -195,15 +197,35 @@ small video through the UI.
 
 ## Deploy
 
-Run from the repo root. Windows uses PowerShell.
+The whole flow is: **install the CLI → authenticate with a token → name your app →
+create it → push your `.env` as secrets → deploy**. No browser login anywhere, so the
+identical steps work on your laptop and in CI. Run everything from the repo root;
+Windows uses PowerShell.
 
-### 1. Authenticate
+### 1. Install `flyctl`
 
-`flyctl` reads `FLY_API_TOKEN`; the token lives in `.env` as `FLY_IO_TOKEN`.
+```powershell
+iwr https://fly.io/install.ps1 -useb | iex     # Windows
+```
+
+```bash
+curl -L https://fly.io/install.sh | sh         # macOS / Linux
+```
+
+It installs to `~/.fly/bin` and adds itself to `PATH` — open a **new** shell, then
+`fly version` to confirm. (If `fly` resolves but won't run, the binary is half-upgraded:
+re-run the installer.)
+
+### 2. Authenticate with a token (not `fly auth login`)
+
+`flyctl` reads **`FLY_API_TOKEN`** from the environment and needs nothing else — no
+browser, no interactive login. This repo keeps the value in `.env` as **`FLY_IO_TOKEN`**;
+the deliberately different name is why the secrets-import filter in step 6 (`-notmatch
+'^FLY_'`) never pushes your Fly credential into the app.
 
 ```powershell
 $env:FLY_API_TOKEN = ((Select-String '^FLY_IO_TOKEN=' .env).Line -replace '^FLY_IO_TOKEN=','').Trim().Trim('"')
-fly auth whoami
+fly auth whoami        # prints your account email = token is good
 ```
 
 ```bash
@@ -211,41 +233,122 @@ export FLY_API_TOKEN="$(grep '^FLY_IO_TOKEN=' .env | cut -d= -f2- | tr -d '\r\"'
 fly auth whoami
 ```
 
-### 2. Create the app
+The variable lives only in that shell — set it again in each new terminal (or add it to
+your profile). Nothing else in the flow re-reads `.env` for it.
+
+**Don't have a token yet?** Create one at
+<https://fly.io/user/personal_access_tokens> (or `fly tokens create org` from an
+already-authenticated machine) and paste it into `.env` as `FLY_IO_TOKEN=...`.
+
+> **Token scope matters.** `fly tokens create deploy` makes an **app-scoped** token — it
+> can `fly deploy` and nothing else, so it fails on `fly apps create` and `fly storage
+> create` with a permissions error. Use an **org / personal access token** for the
+> first-time setup below, and save the narrow deploy token for CI (step 8).
+
+### 3. Choose your app name (and where to change it)
+
+Fly app names are **globally unique across all of Fly**, so `momentsearch` is already
+taken: `fly apps create` will fail with *"Name has already been taken"*. Pick your own
+(e.g. `momentsearch-<you>`) and change it in **one place**:
+
+| File | Line | Change it when |
+|---|---|---|
+| [`fly.toml`](../fly.toml) | `app = 'momentsearch'` | **Always** — this is the default fat deploy. |
+| [`fly.slim.toml`](../fly.slim.toml) | `app = 'CHANGE-ME-slim'` | Only for the slim/GPU split, and it must be a **different** name from the fat app. |
+
+**Nothing else needs editing.** Specifically:
+
+- The **clip machine's internal address** is derived at runtime from Fly's own
+  `FLY_APP_NAME` — `http://clip.process.<app>.internal:8001`
+  ([`config.py:249-250`](../src/config.py#L249-L250)) — so `api` and `worker` find `clip`
+  under any app name, with no host hardcoded anywhere.
+- The **CI workflow** ([`.github/workflows/fly-deploy.yml`](../.github/workflows/fly-deploy.yml))
+  runs `flyctl deploy` with no `-a`, so it picks the name up from `fly.toml` too.
+- Your **URL** becomes `https://<app>.fly.dev` automatically.
+
+Two things that *do* follow the name, because they live outside the repo:
+
+- The **bucket CORS rule** must allow your real origin — update `AllowedOrigins` to
+  `https://<your-app>.fly.dev` ([Object storage](#object-storage)), or browser uploads
+  break with a CORS error while everything else looks fine.
+- **Secrets and Tigris buckets are per-app.** A new name means a new app with an empty
+  secret store, so steps 4-7 run again for it.
+
+Treat the name as immutable: pick it before the first deploy. Changing it later means
+creating a new app and redeploying, not renaming in place.
+
+### 4. Create the app
 
 ```powershell
-fly apps create momentsearch --org personal
+fly apps create momentsearch-<you> --org personal
 ```
 
-App names are globally unique — pick your own (e.g. `momentsearch-<you>`) and set it in **one** place: the `app = '…'` line in `fly.toml`. The clip address derives from `FLY_APP_NAME` at runtime.
+The name here **must match** the `app = '…'` line you just set in `fly.toml` (otherwise
+every later command needs `-a <name>`). Confirm with `fly apps list`.
 
-### 3. Push secrets
+### 5. Provision the bucket
 
-Import `.env` (skip local-only bits), then add YouTube cookies as base64 — Fly has no bind mount for `./secrets`, so the worker decodes the secret to a writable temp file instead (`src/ingest/fetch.py::_cookiefile`).
+Do this before the first deploy so the seed step has somewhere to write. Tigris is one
+command; GCS and S3 are set as secrets instead — see
+[Object storage](#object-storage) for all three.
+
+```powershell
+fly storage create                              # Tigris; injects the AWS_*/BUCKET_NAME secrets
+fly secrets set STORAGE_PROVIDER=flyio
+```
+
+### 6. Push your `.env` as secrets
+
+One import moves your whole local config to Fly. The filter drops the local-only lines:
+`^FLY_` keeps your **Fly token** out of the app's own secrets, and `YT_COOKIES_FILE`
+points at a bind mount Fly doesn't have.
 
 ```powershell
 Get-Content .env |
   Where-Object { $_ -match '^[A-Z_]+=.+' -and $_ -notmatch '^FLY_' -and $_ -notmatch '^YT_COOKIES_FILE=' } |
   fly secrets import
+```
 
+YouTube cookies go up as base64 instead of a file — the worker decodes the secret to a
+writable temp path at runtime (`src/ingest/fetch.py::_cookiefile`):
+
+```powershell
 $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("secrets/cookies.txt"))
 fly secrets set YT_COOKIES_B64="$b64"
 ```
 
-### 4. Deploy
+Check what landed with `fly secrets list` (names and digests only — values are
+write-only once set).
+
+### 7. Deploy
 
 ```powershell
 fly deploy --ha=false
 ```
 
-`release_command` runs the seed step (`python -m src.seed`) first. Samples already in shared Qdrant/Neon exit in seconds; a fresh Qdrant re-indexes the sample talk (best-effort by default — set `SEED_STRICT=true` for a hard gate, `SEED_SAMPLE_VIDEOS=false` to skip).
-
-### 5. Open
+`release_command` runs the seed step (`python -m src.seed`) first. Samples already in
+shared Qdrant/Neon exit in seconds; a fresh Qdrant re-indexes the sample talk
+(best-effort by default — set `SEED_STRICT=true` for a hard gate,
+`SEED_SAMPLE_VIDEOS=false` to skip).
 
 ```powershell
-fly open           # -> https://momentsearch.fly.dev/
+fly open           # -> https://<your-app>.fly.dev/
+fly status         # machines per process group
 fly logs           # tail all processes
 ```
+
+### 8. Optional — same token flow in CI
+
+[`.github/workflows/fly-deploy.yml`](../.github/workflows/fly-deploy.yml) redeploys on
+every push to `dev` using the exact same mechanism: `flyctl deploy --remote-only` with
+`FLY_API_TOKEN` in the environment. Add a **narrow** app-scoped token as the
+`FLY_API_TOKEN` repo secret (Settings → Secrets and variables → Actions):
+
+```powershell
+fly tokens create deploy -x 999999h
+```
+
+The app comes from `fly.toml`, so a renamed app needs no workflow edit.
 
 ## Scale
 
@@ -261,10 +364,14 @@ fly secrets set WORKER_CONCURRENCY=3   # more videos per worker
 
 Default is **fat** — all three groups in one CPU image on Fly. For a GPU CLIP, run the embedder on an external GPU host (Fly is CPU-only since Jul 2026), keep `api` + `worker` slim on Fly via [`fly.slim.toml`](../fly.slim.toml), and point `EMBED_SERVICE_URL` at it.
 
-**CI/CD:** `.github/workflows/fly-deploy.yml` redeploys on every push to `dev` (`flyctl deploy --remote-only`); add a deploy token (`fly tokens create deploy`) as the `FLY_API_TOKEN` repo secret.
+That slim config is a **second Fly app**, so give it its own name in its `app = '…'` line and run steps 4-7 against it (`fly deploy -c fly.slim.toml`). It has no `clip` process, so `EMBED_SERVICE_URL` is mandatory there — the derived `.internal` address would point at a process that doesn't exist.
 
 ## Troubleshooting
 
+- **Every `fly` command says you're not logged in** → `FLY_API_TOKEN` isn't set in *this* shell. It's per-terminal; re-run step 2. `fly auth whoami` is the check.
+- **`Name has already been taken`** on `fly apps create` → app names are global. Pick a unique one and set the same value in `fly.toml` (step 3).
+- **`not authorized` / permission error on `fly apps create` or `fly storage create`** → you're using an app-scoped deploy token. Those commands need an org or personal access token (step 2).
+- **`Could not find App`, or secrets land somewhere unexpected** → the `app = '…'` line in `fly.toml` doesn't match the app you created. Fix the file, or pass `-a <name>` on every command.
 - **Build fails with 403 / "high risk"** → build locally: `fly deploy --ha=false --local-only` (needs Docker Desktop), or unlock at <https://fly.io/high-risk-unlock>.
 - **Deploy aborts on release_command** → only with `SEED_STRICT=true`; check `fly logs`, fix the bad secret, or drop `SEED_STRICT`.
 - **`/demo` empty after fresh deploy** → best-effort seed skipped indexing; set `YT_COOKIES_B64` on the empty Qdrant and redeploy.
