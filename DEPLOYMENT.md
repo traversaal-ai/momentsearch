@@ -27,7 +27,7 @@ Qdrant, Prefect, object storage). Moving between clouds changes only:
 Storage is a **free choice, not a platform constraint**: Tigris, GCS and S3 are all
 first-class and any of them runs on any target. The column above is just the
 path of least resistance per cloud. Each guide's **Object storage** section
-([Fly](deployment_docs/fly.md#step-5--create-the-storage-bucket-tigris) ·
+([Fly](deployment_docs/fly.md#step-5--make-the-storage-bucket) ·
 [AWS](deployment_docs/aws.md#object-storage) ·
 [GCP](deployment_docs/gcp.md#object-storage)) documents all three, with the
 bucket, credential and **CORS** steps that browser uploads need.

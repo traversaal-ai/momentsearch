@@ -124,7 +124,7 @@ project, same IAM, no egress), not a technically better one.
 | **GCS** | `gcp_native` | bucket + service account | Native. Google SDK + SA key; no HMAC keys. |
 | **GCS over S3** | `gcp` | bucket + HMAC key pair | Same bucket, S3 protocol — two credentials instead of seven env vars. |
 | **S3** | `aws` | bucket + IAM user | Works fine; cross-cloud egress applies. Setup: [aws.md → Object storage](aws.md#object-storage). |
-| **Tigris** | `flyio` | one command on Fly | Easiest if you already run a Fly app; usable from GCP with the `tid_`/`tsec_` keys. Setup: [fly.md → step 5](fly.md#step-5--create-the-storage-bucket-tigris). |
+| **Tigris** | `flyio` | one command on Fly | Easiest if you already run a Fly app; usable from GCP with the `tid_`/`tsec_` keys. Setup: [fly.md → step 5](fly.md#step-5--make-the-storage-bucket). |
 
 For S3 or Tigris on GCP, set that provider's vars from the linked section instead of the
 `GOOGLE_CLOUD_*` ones below — nothing else about this deploy changes.

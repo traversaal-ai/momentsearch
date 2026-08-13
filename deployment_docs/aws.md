@@ -107,7 +107,7 @@ vendor), not a technically better one.
 |---|---|---|---|
 | **S3** | `aws` | bucket + IAM user/role | Native. ECS task role means **no static keys** at all. |
 | **GCS** | `gcp_native` | GCP project + service account | Works fine; cross-cloud egress applies. Setup: [gcp.md → Object storage](gcp.md#object-storage). |
-| **Tigris** | `flyio` | one command on Fly | Easiest if you already run a Fly app; usable from AWS with the `tid_`/`tsec_` keys. Setup: [fly.md → step 5](fly.md#step-5--create-the-storage-bucket-tigris). |
+| **Tigris** | `flyio` | one command on Fly | Easiest if you already run a Fly app; usable from AWS with the `tid_`/`tsec_` keys. Setup: [fly.md → step 5](fly.md#step-5--make-the-storage-bucket). |
 
 For GCS or Tigris on AWS, set that provider's vars from the linked section instead of
 the `STORAGE_*` S3 ones below — nothing else about this deploy changes.
