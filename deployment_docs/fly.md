@@ -29,6 +29,15 @@ Fly deploys involve **two separate credentials**, and confusing them is the usua
 
 So: you authenticate **yourself** to Fly once (steps 1–2); the **bucket's** own credentials are handled in step 5.
 
+**"Authenticate once" is literally these two lines** (with your token already in `.env` as `FLY_IO_TOKEN`, and flyctl working — Step 0):
+
+```powershell
+$env:FLY_API_TOKEN = ((Select-String '^FLY_IO_TOKEN=' .env).Line -replace '^FLY_IO_TOKEN=','').Trim().Trim('"')
+fly auth whoami        # prints your email = authenticated
+```
+
+The first line loads your token into the env var flyctl reads; the second confirms it. That's it — no browser, no `fly auth login`. Re-run it in each new terminal (the variable is per-shell). Full detail in [Step 2](#step-2--authenticate-token-not-fly-auth-login).
+
 ---
 
 ## Quick deploy — copy-paste, in order (PowerShell)
@@ -70,7 +79,9 @@ The numbered steps below are the same flow, explained — read them if a line er
 
 ---
 
-## Step 0 — Install flyctl and confirm it runs
+## Step 0 — Install flyctl
+
+**1. Run this — it downloads and installs flyctl:**
 
 ```powershell
 iwr https://fly.io/install.ps1 -useb | iex     # Windows (PowerShell)
@@ -80,13 +91,23 @@ iwr https://fly.io/install.ps1 -useb | iex     # Windows (PowerShell)
 curl -L https://fly.io/install.sh | sh         # macOS / Linux
 ```
 
-It installs to `~/.fly/bin` and adds itself to `PATH`. **Open a NEW shell**, then verify:
+It installs to `~/.fly/bin` and adds itself to `PATH`.
+
+**2. Close this terminal and open a NEW one** — so it picks up the updated `PATH`.
+
+**3. Confirm it works:**
 
 ```powershell
-fly version        # must print a version, e.g. "flyctl v0.3.xxx"
+fly version        # prints a version, e.g. "flyctl v0.4.82" -> installed, go to Step 1
 ```
 
-**If `fly` won't run** — Windows *"No application is associated with the specified file"*, or it resolves but does nothing — the binary is **broken or half-upgraded** (a common failure is a 0-byte `~/.fly/bin/fly.exe` from an interrupted update). Fix by **re-running the installer above** — it re-downloads a clean `fly.exe`. If the download itself was interrupted (a corrupt `flyctl.zip`), just run the installer again on a stable connection. Don't continue until `fly version` prints.
+**If `fly` won't run, reinstall it** — re-running the installer above lays down a clean `fly.exe` **and** its `wintun.dll`, then open a **new** shell. This fixes all the common broken-install states:
+
+- *"No application is associated with the specified file"* (Windows) → a **0-byte `~/.fly/bin/fly.exe`** from an interrupted update.
+- *"failed to update, and the current version is severely out of date: rename …\wintun.dll …: The system cannot find the file specified"* → the CLI is too old to run and its **self-updater is broken** (a missing `wintun.dll`). The installer replaces both files; don't bother with `fly version upgrade` (that's the updater that's failing).
+- A corrupt `flyctl.zip` / interrupted download → run the installer again on a stable connection.
+
+Don't continue until `fly version` prints a version.
 
 ---
 
