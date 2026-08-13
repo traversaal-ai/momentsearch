@@ -335,10 +335,20 @@ def ask(question: str, user_id: str, *, top_k: int | None = None,
     # GET per moment), so it gets its own stage rather than hiding inside "answering".
     on_stage("reading", f"{len(citations)} moment{'' if len(citations) == 1 else 's'}")
     moments = _build_moments(user_id, citations)
+    # A local runtime (Ollama & co) serves a 4096-token window by default, which a
+    # full six-frame request overruns — trim to fit rather than 500. No-op for
+    # hosted providers. The note tells the user what was left out and how to lift
+    # the cap; citations still list everything retrieved, so nothing is hidden.
+    moments, trim_note = llm.fit_local_context(cfg, moments)
+    if trim_note:
+        result["note"] = trim_note
     frames = sum(1 for m in moments if m.get("image"))
     on_stage("answering", f"{cfg.model} reading {frames} frame{'' if frames == 1 else 's'}")
+    # Bound the citation validator by what the model was actually SHOWN: after a
+    # trim it only knows moments 1..len(moments), so a [5] from a 3-moment prompt
+    # is an invention and gets stripped.
     result["answer"] = _validate_citations(llm.answer(question, moments, cfg),
-                                           len(citations))
+                                           len(moments))
     result["llm_used"] = True
     result["llm_source"] = source          # "user" = their own hosted model
     result["llm_model"] = cfg.model

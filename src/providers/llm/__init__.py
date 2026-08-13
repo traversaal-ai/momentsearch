@@ -26,8 +26,8 @@ import io
 
 from ... import config
 from ..registry import LLM_PROVIDERS, is_known_llm, llm_preset
-from .base import (NVIDIA_BASE_URL, SYSTEM, LLMConfig, missing_requirement,
-                   resolve)
+from .base import (NVIDIA_BASE_URL, SYSTEM, LLMConfig, fit_local_context,
+                   is_local_runtime, missing_requirement, resolve)
 
 # Canonical provider names. Aliases ("grok", "claude", "azure", ...) are
 # accepted everywhere too — see registry.LLM_ALIASES.
@@ -35,7 +35,8 @@ PROVIDERS: tuple[str, ...] = LLM_PROVIDERS
 
 __all__ = ["PROVIDERS", "SYSTEM", "NVIDIA_BASE_URL", "LLMConfig", "answer",
            "ping", "env_config", "from_row", "describe", "is_provider",
-           "missing_requirement", "resolve"]
+           "missing_requirement", "resolve", "fit_local_context",
+           "is_local_runtime"]
 
 
 def is_provider(name: str) -> bool:

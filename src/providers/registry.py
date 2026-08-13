@@ -116,10 +116,15 @@ LLM_PRESETS: Mapping[str, LLMPreset] = {
               "AZURE_OPENAI_API_VERSION."),
 
     # --- Self-hosted (no key needed) ------------------------------------------
+    # 3b, not the bare `qwen2.5vl` tag (7B): the 3B is the size that is actually
+    # usable on a CPU box, and it's the one this default is verified against.
+    # NOTE: Ollama serves a 4096-token context by default, which a full six-frame
+    # request overruns — src/providers/llm/base.py::fit_local_context trims to fit
+    # and says so in the answer. See MODELS.md "Running the answer LLM locally".
     "ollama": LLMPreset(
         label="Ollama", kind="openai", base_url="http://localhost:11434/v1",
-        default_model="qwen2.5vl", requires_key=False,
-        notes="Pull a VISION model first: `ollama pull qwen2.5vl`."),
+        default_model="qwen2.5vl:3b", requires_key=False,
+        notes="Pull a VISION model first: `ollama pull qwen2.5vl:3b`."),
     "lmstudio": LLMPreset(
         label="LM Studio", kind="openai", base_url="http://localhost:1234/v1",
         requires_key=False, notes="Set LLM_MODEL to the loaded model's id."),

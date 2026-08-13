@@ -102,6 +102,8 @@ This is where uploaded videos and thumbnails are stored. One command makes the b
 fly storage create --name "$APP-media"
 ```
 
+> **This needs a full personal Fly token on YOUR OWN org, with billing set up.** A deploy token, or someone else's org (like a shared/personal org you were added to), fails with `Not authorized … createextensiontosagreement`. If that happens: ask the org **owner** to run this one command for you, or use Google/Amazon storage instead (see the note below).
+
 Then turn it on:
 
 ```powershell

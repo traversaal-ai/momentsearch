@@ -502,6 +502,26 @@ LLM_MODEL = os.getenv("LLM_MODEL", "").strip() or _LLM.default_model
 LLM_MAX_TOKENS = _int("LLM_MAX_TOKENS", 1024)
 LLM_IMAGE_MAX_PX = _int("LLM_IMAGE_MAX_PX", 512)  # frames are downscaled again before the LLM
 
+# --- Local-runtime context budget (Ollama / LM Studio / vLLM) -------------------
+# Local runtimes ship a SMALL default context — Ollama is 4096 tokens — while one
+# 512px frame costs roughly a thousand. A normal TOP_K=6 answer is ~5.4k tokens,
+# so against a stock `ollama pull` the very first real question dies with
+# `exceed_context_size_error` and the user sees a 500. Measured on qwen2.5vl:3b.
+#
+# So for these providers ONLY, trim the request to fit instead of failing: fewer
+# moments, smaller frames, shorter transcript excerpts. The answer says it was
+# trimmed and how to lift it — a quietly degraded answer would be worse than the
+# error it replaces. Hosted providers are untouched (their windows are ~128k).
+#
+# The better fix is on the Ollama side — a model built with a bigger window:
+#     printf 'FROM qwen2.5vl:3b\nPARAMETER num_ctx 8192\n' > Modelfile
+#     ollama create qwen2.5vl:3b-ctx8k -f Modelfile
+# Do that, then set LOCAL_LLM_TRIM=false to send the full request.
+LOCAL_LLM_TRIM = _envbool("LOCAL_LLM_TRIM", True)
+LOCAL_LLM_MAX_MOMENTS = _int("LOCAL_LLM_MAX_MOMENTS", 3)      # of TOP_K, how many reach the model
+LOCAL_LLM_IMAGE_MAX_PX = _int("LOCAL_LLM_IMAGE_MAX_PX", 320)  # instead of LLM_IMAGE_MAX_PX
+LOCAL_LLM_TRANSCRIPT_CHARS = _int("LOCAL_LLM_TRANSCRIPT_CHARS", 320)  # 0 = don't truncate
+
 
 def llm_configured() -> bool:
     """Is there a server-wide answer model at all? (No = retrieval-only mode,

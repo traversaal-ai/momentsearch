@@ -11,6 +11,23 @@ anywhere Docker runs. Pick your target:
 | **[AWS](deployment_docs/aws.md)** | one EC2 + `docker compose`, or ECS/Fargate (fat & slim) |
 | **[Google Cloud](deployment_docs/gcp.md)** | one GCE VM + `docker compose`, or GKE / Cloud Run (fat & slim) |
 
+## Before you deploy — get these keys first
+
+Every deploy (Fly, AWS, GCP) needs the **same four services**. Sign up and put the values in your `.env` **before** you start any cloud guide — they're the same everywhere; only storage and compute change per cloud.
+
+| What | Env var(s) | Where to get it |
+|---|---|---|
+| **Database** (Postgres) | `DATABASE_URL` | [neon.tech](https://neon.tech) → create a project → copy the **Pooled** connection string. |
+| **Vector store** (Qdrant) | `QDRANT_URL` + `QDRANT_API_KEY` | [cloud.qdrant.io](https://cloud.qdrant.io) → create a cluster → copy its URL + API key. |
+| **Work queue** (Prefect) | `PREFECT_API_URL` + `PREFECT_API_KEY` | [app.prefect.cloud](https://app.prefect.cloud) → avatar → API Keys (free, no card). |
+| **Answer model** (OpenAI) | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys). Also does transcripts + upload speech-to-text. |
+
+Optional: **`GEMINI_API_KEY`** for speaker recognition ("who said what") — [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Leave it out and everything else still works.
+
+> No OpenAI key? The app still runs — you get ranked, clickable moments, just no written answer.
+
+**Storage is separate** and depends on your cloud — each guide below sets that up (bucket + keys + CORS), then deploys the app.
+
 ## Same image everywhere — only three things change
 
 The architecture is identical on every target: **one image, three long-running

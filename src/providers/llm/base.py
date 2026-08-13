@@ -186,6 +186,20 @@ def label(i: int, m: dict) -> str:
     return line
 
 
+def _shrink(jpeg: bytes, max_px: int) -> bytes:
+    """Resize a JPEG so its longest side is at most `max_px`. Already-smaller
+    images are returned untouched, which is what makes this safe to apply twice."""
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(jpeg))
+    if max(img.size) <= max_px:
+        return jpeg
+    img.thumbnail((max_px, max_px))
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=80)
+    return buf.getvalue()
+
+
 def downscale(jpeg: bytes) -> bytes:
     """Shrink a frame before it becomes LLM image tokens.
 
@@ -193,12 +207,74 @@ def downscale(jpeg: bytes) -> bytes:
     thumbnail size can be several times the tokens of the same frames at
     LLM_IMAGE_MAX_PX, for no measurable answer-quality gain.
     """
-    from PIL import Image
+    return _shrink(jpeg, config.LLM_IMAGE_MAX_PX)
 
-    img = Image.open(io.BytesIO(jpeg))
-    if max(img.size) <= config.LLM_IMAGE_MAX_PX:
-        return jpeg
-    img.thumbnail((config.LLM_IMAGE_MAX_PX, config.LLM_IMAGE_MAX_PX))
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=80)
-    return buf.getvalue()
+
+# ── Local-runtime context budget ──────────────────────────────────────────────
+# Ollama, LM Studio and vLLM serve whatever context the model was BUILT with, and
+# Ollama's default is 4096 tokens. One 512px frame is ~1000 tokens, so a normal
+# six-moment request (~5.4k) is rejected outright — the first real question a
+# local user asks returns a 500, not a slow answer. See config.LOCAL_LLM_*.
+_LOCAL_RUNTIMES = ("ollama", "lmstudio", "vllm")
+
+
+def is_local_runtime(cfg: LLMConfig) -> bool:
+    """True for the key-less local servers whose default context is small.
+
+    Deliberately NOT is_self_hosted(): `custom` with a base_url may well be a
+    large hosted deployment behind a proxy, and silently halving its evidence
+    would be a worse surprise than the error this avoids.
+    """
+    return llm_provider_key(cfg.provider) in _LOCAL_RUNTIMES
+
+
+def fit_local_context(cfg: LLMConfig,
+                      moments: list[dict]) -> tuple[list[dict], str | None]:
+    """Trim a request to fit a small local context. Returns (moments, note).
+
+    Order matters: moments arrive best-first, so keeping a prefix keeps the
+    STRONGEST evidence and the [n] numbering still lines up with the citation
+    list the UI renders.
+
+    The note is not optional politeness — the answer is being built from less
+    evidence than was retrieved, and a user who isn't told that has no way to
+    know why a local answer is thinner than a hosted one.
+    """
+    if not config.LOCAL_LLM_TRIM or not is_local_runtime(cfg) or not moments:
+        return moments, None
+
+    keep = max(1, config.LOCAL_LLM_MAX_MOMENTS)
+    kept, dropped = moments[:keep], max(0, len(moments) - keep)
+    max_px = config.LOCAL_LLM_IMAGE_MAX_PX
+    chars = config.LOCAL_LLM_TRANSCRIPT_CHARS
+
+    out = []
+    for m in kept:
+        m = dict(m)
+        if m.get("image") and max_px > 0:
+            try:
+                m["image"] = _shrink(m["image"], max_px)
+            except Exception:      # a corrupt frame must not sink the answer
+                pass
+        text = m.get("transcript")
+        if text and chars > 0 and len(text) > chars:
+            m["transcript"] = text[:chars].rstrip() + "…"
+        out.append(m)
+
+    # Nothing actually changed (few moments, already-small frames) -> no note.
+    if not dropped and max_px >= config.LLM_IMAGE_MAX_PX:
+        return out, None
+
+    # Written for whoever is reading the answer, not for whoever configured the
+    # server: what happened first, why second, the fix last.
+    if dropped:
+        did = f"used the best {len(out)} of {len(moments)} moments"
+        if max_px < config.LLM_IMAGE_MAX_PX:
+            did += ", with smaller frames"
+    else:
+        did = "used smaller frames"
+    return out, (
+        f"This answer {did}. A local model can only read so much at once, so "
+        f"MomentSearch sends {llm_preset(cfg.provider).label} less than it sends "
+        "a hosted model. See MODELS.md to send everything."
+    )

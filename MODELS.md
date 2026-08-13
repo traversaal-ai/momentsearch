@@ -58,7 +58,7 @@ overrides the provider-specific key; `LLM_BASE_URL` overrides the endpoint.
 | `mistral` | `pixtral-12b-2409` | `MISTRAL_API_KEY` |
 | `nvidia` | `meta/llama-3.2-11b-vision-instruct` | `NVIDIA_API_KEY` |
 | `azure_openai` | *`LLM_MODEL` = deployment name* | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` |
-| `ollama` | `qwen2.5vl` | *none — `http://localhost:11434/v1`* |
+| `ollama` | `qwen2.5vl:3b` | *none — `http://localhost:11434/v1`* — [read this first](#running-the-answer-llm-locally-ollama--lm-studio--vllm) |
 | `lmstudio` | *set `LLM_MODEL`* | *none — `http://localhost:1234/v1`* |
 | `vllm` | *set `LLM_MODEL`* | *none — `http://localhost:8000/v1`* |
 | `custom` | *set `LLM_MODEL`* | *set `LLM_BASE_URL` (+ key if needed)* |
@@ -71,11 +71,70 @@ LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=...
 # ── or a local model, no key ──
 LLM_PROVIDER=ollama
-LLM_MODEL=qwen2.5vl
+LLM_MODEL=qwen2.5vl:3b
+LLM_BASE_URL=http://host.docker.internal:11434/v1   # only if the app runs in Docker
 ```
 
 > **No key at all?** Leave the LLM unset — retrieval still returns ranked,
 > clickable moments (the UI reads "No LLM — moments only").
+
+### Running the answer LLM locally (Ollama / LM Studio / vLLM)
+
+**It works, and you don't have to configure anything.** Pull a vision model, set
+`LLM_PROVIDER=ollama`, and ask. Read on only if you want to know why answers from
+a local model are shorter, or how to make them fuller.
+
+**Why they're shorter.** A model can only read so much at once. Ollama gives every
+model room for about 4,000 words' worth by default — and each video frame eats
+roughly 1,000 of that. Six frames plus their transcripts comes to about 5,400, so
+the whole request doesn't fit and the model rejects it:
+
+```
+request (5361 tokens) exceeds the available context size (4096 tokens)
+```
+
+**So we send less.** For these three providers only, MomentSearch sends the best 3
+moments instead of 6 and shrinks the frames. That fits, so you get an answer
+instead of an error. The answer tells the reader it was shortened. Hosted
+providers (OpenAI, Gemini, Claude…) have far more room and are never touched.
+
+You can change what gets sent:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `LOCAL_LLM_TRIM` | `true` | Set `false` to switch all of this off and send everything. |
+| `LOCAL_LLM_MAX_MOMENTS` | `3` | How many moments the model sees. `TOP_K` (6) are still retrieved and still shown to the user. |
+| `LOCAL_LLM_IMAGE_MAX_PX` | `320` | How big each frame is. Smaller = fits more, sees less detail. |
+| `LOCAL_LLM_TRANSCRIPT_CHARS` | `320` | Longest transcript excerpt per moment. `0` = don't shorten. |
+
+**Want the full six moments?** Give the model more room, then turn trimming off.
+Build a copy of it with a bigger window:
+
+```bash
+printf 'FROM qwen2.5vl:3b\nPARAMETER num_ctx 8192\n' > Modelfile
+ollama create qwen2.5vl:3b-ctx8k -f Modelfile
+```
+
+```ini
+LLM_MODEL=qwen2.5vl:3b-ctx8k
+LOCAL_LLM_TRIM=false
+```
+
+**Two things to expect before you commit to running locally.** Measured on a
+laptop with no GPU (16GB RAM, `qwen2.5vl:3b`, the 8k build, all six frames):
+
+- **It is slow: about 5½ minutes per answer**, against 7 seconds for hosted
+  `gpt-4o`. Almost all of that is the model reading the images. A GPU fixes it.
+  More RAM does not.
+- **A small model may not cite anything.** The 3B model wrote a perfectly good
+  answer with no `[1]` `[2]` markers in it — so nothing in the answer was
+  clickable, which is most of the point of this app. Bigger local models follow
+  the citation instruction more reliably.
+
+> **A passing `Test` button doesn't mean you're ready.** `POST /api/llm/test`
+> sends one small image, so it succeeds even on a model that's too small to
+> handle a real question. It proves the model is reachable and can see images —
+> nothing more. Ask a real question to be sure.
 
 ---
 
