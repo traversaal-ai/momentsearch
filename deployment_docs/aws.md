@@ -89,8 +89,11 @@ across (`aws s3 sync s3://old s3://new`).
 
 ## Object storage
 
-**Step 3.** Uploaded videos, frame thumbnails and transcript JSON live in **one private
-bucket**, keyed `{user_id}/{video_id}/` ([`src/storage.py`](../src/storage.py)). The browser
+**Step 3 — do steps 1–2 first.** These `aws s3api` / `aws iam` commands need the CLI
+authenticated (step 1) and your bucket name chosen (step 2), or they fail with
+"Unable to locate credentials" / `BucketAlreadyExists` errors. Uploaded videos, frame
+thumbnails and transcript JSON live in **one private bucket**, keyed
+`{user_id}/{video_id}/` ([`src/storage.py`](../src/storage.py)). The browser
 PUTs straight to the bucket with a presigned URL and reads thumbnails/playback with
 presigned GETs — bytes never pass through the API.
 
@@ -104,7 +107,7 @@ vendor), not a technically better one.
 |---|---|---|---|
 | **S3** | `aws` | bucket + IAM user/role | Native. ECS task role means **no static keys** at all. |
 | **GCS** | `gcp_native` | GCP project + service account | Works fine; cross-cloud egress applies. Setup: [gcp.md → Object storage](gcp.md#object-storage). |
-| **Tigris** | `flyio` | one command on Fly | Easiest if you already run a Fly app; usable from AWS with the `tid_`/`tsec_` keys. Setup: [fly.md → Object storage](fly.md#object-storage). |
+| **Tigris** | `flyio` | one command on Fly | Easiest if you already run a Fly app; usable from AWS with the `tid_`/`tsec_` keys. Setup: [fly.md → step 5](fly.md#step-5--create-the-storage-bucket-tigris). |
 
 For GCS or Tigris on AWS, set that provider's vars from the linked section instead of
 the `STORAGE_*` S3 ones below — nothing else about this deploy changes.

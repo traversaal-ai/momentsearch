@@ -103,7 +103,7 @@ Cookies expire in ~2–3 weeks — re-export when YouTube starts failing again. 
 
 ## Object storage
 
-`STORAGE_PROVIDER=local` (the default) writes files under `./data` with no bucket and no keys. Switch to a bucket when you deploy — all providers speak the S3 API except `gcp_native`, which uses Google's SDK with a service-account JSON. Creating the bucket, the IAM key / service account, and the required CORS rule is covered per cloud in the deployment guides: **[AWS / S3](deployment_docs/aws.md#object-storage)** · **[GCP / GCS](deployment_docs/gcp.md#object-storage)** · **[Fly / Tigris](deployment_docs/fly.md#object-storage)**. Each of those sections documents all three providers, so any cloud can use any bucket.
+`STORAGE_PROVIDER=local` (the default) writes files under `./data` with no bucket and no keys. Switch to a bucket when you deploy — all providers speak the S3 API except `gcp_native`, which uses Google's SDK with a service-account JSON. Creating the bucket, the IAM key / service account, and the required CORS rule is covered per cloud in the deployment guides: **[AWS / S3](deployment_docs/aws.md#object-storage)** · **[GCP / GCS](deployment_docs/gcp.md#object-storage)** · **[Fly / Tigris](deployment_docs/fly.md#step-5--create-the-storage-bucket-tigris)**. Each of those sections documents all three providers, so any cloud can use any bucket.
 
 > Keep the bucket **private** — only presigned URLs get in or out — and set a **CORS rule** allowing PUT from your site's origin, or browser uploads fail.
 
