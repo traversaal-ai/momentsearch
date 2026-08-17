@@ -38,17 +38,21 @@ Two decisions worth keeping if you extend this:
 
 **1 · Retrieve — both branches, in parallel, always.** No query router: routing fails exactly on the ambiguous questions where you need help most.
 
+> **In plain words:** search your videos **two ways at once** — by *what's on screen* (the frames) and by *what's said* (the transcript) — and grab the top matches from each. Retrieval is cheap, so cast a wide net here.
+
 - **visual** — text-embed the question into the *frame* space → Qdrant `moments_l14`, filtered by `user_id`, quantization-rescored. Milliseconds.
 - **text** — query-embed → `moments_text_openai` (captions + Whisper). Skipped cleanly when `ENABLE_TRANSCRIPT=false` or nothing is indexed.
 
 **2 · Score — the fusion module** (`_fuse`, [src/rag/search.py](src/rag/search.py)). The branches' raw scores are incomparable (CLIP ~0.3 vs text ~0.7), so we never sort by raw score:
+
+> **In plain words:** the two searches score on different scales, so we can't just compare numbers. We **rank** each list, **merge** them fairly, **join** hits at the same moment into one, **boost** moments where picture *and* words agree, then a **reranker re-reads** the top transcript matches to reorder by true relevance.
 
 | Step | What it does |
 |---|---|
 | **RRF** | rank each branch on its own, score by rank `1/(RRF_K + rank)` — a strong frame and a strong transcript hit compete fairly |
 | **time-window** | hits within `FUSION_WINDOW_S` seconds of the same video collapse into one *moment*; the timestamp is the join key |
 | **cross-modal boost** | a moment where **both** a frame and a transcript chunk land at the same instant is ×`CROSS_MODAL_BOOST` — two independent modalities agreeing is the strongest signal available |
-| **cross-encoder rerank** | a local, keyless reranker re-judges the top text candidates and blends with the normalized RRF (`RERANK_WEIGHT`). **On by default**; `ENABLE_RERANK=false` falls back to plain RRF |
+| **cross-encoder rerank** | a local, keyless reranker re-reads the top text candidates and blends with the normalized RRF (`RERANK_WEIGHT`). Frame-only moments (no transcript) are then scaled by **how strong their raw visual match is** (`VISUAL_STRONG`): a weak talking-head frame sinks below a clearly-relevant transcript, while a real slide/diagram still ranks. **On by default**; `ENABLE_RERANK=false` = plain RRF |
 
 The top `TOP_K` fused moments go forward.
 
@@ -83,7 +87,7 @@ flowchart TB
     r["① RRF — rank each branch on its own<br/>score = 1 / (RRF_K + rank)"]
     w["② time-window — group hits ≤ FUSION_WINDOW_S s<br/>(same video) into one 'moment'"]
     b["③ best-per-modality + ×CROSS_MODAL_BOOST<br/>when a frame AND transcript agree at that instant"]
-    x["④ cross-encoder rerank (default on)<br/>ms-marco-MiniLM · blend RERANK_WEIGHT"]
+    x["④ cross-encoder rerank (default on)<br/>text: blend RERANK_WEIGHT · frames: scale by VISUAL_STRONG"]
     r --> w --> b --> x
   end
 
