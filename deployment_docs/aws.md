@@ -6,7 +6,7 @@ Two parts: **Part 1** sets up an S3 bucket, **Part 2** runs the app. Do them in 
 
 ## Before you start
 
-1. **Get the shared keys first** — Neon, Qdrant, Prefect, OpenAI (and optional Gemini). See [DEPLOYMENT.md → Before you deploy](../DEPLOYMENT.md#before-you-deploy--get-these-keys-first). Put them in your `.env`.
+1. **Get the shared keys first** — Neon, Qdrant, Prefect, OpenAI (and optional Gemini). See [DEPLOYMENT.md → the keys you need](../DEPLOYMENT.md#2-the-keys-every-deploy-needs). Put them in your `.env`.
 2. An **AWS account**.
 3. **Docker** installed, and the **`aws`** CLI (installed in Step 1 below).
 
@@ -46,7 +46,7 @@ Check it works: `aws sts get-caller-identity` (shows your account) and `docker v
 
 ### Step 2 — Pick a bucket name and region
 
-- **Bucket name** is **unique across all of AWS**, so `momentsearch-media` is likely taken. Use `momentsearch-media-yourname` (lowercase, digits, hyphens).
+- **Bucket name** is **globally unique** across all AWS accounts by default. **Try `momentsearch-media`** — if nobody's taken it, it's yours. If `create` fails with **`BucketAlreadyExists`**, add something unique like `momentsearch-media-yourname` (lowercase, digits, hyphens).
 - **Region** (e.g. `us-east-1`) must be the **same** in the bucket, `STORAGE_REGION`, and everywhere below. A wrong region shows up as a `301`/redirect error on upload.
 
 ### Step 3 — Create the private bucket
@@ -81,8 +81,10 @@ Attach that policy to an IAM user in the console (**IAM → Users → your user 
 
 ### Step 5 — Put it in `.env`
 
+Your `.env` (copied from `.env.example`) has `STORAGE_PROVIDER=local` — **change that line to `aws`** and fill in the rest:
+
 ```dotenv
-STORAGE_PROVIDER=aws
+STORAGE_PROVIDER=aws              # change this from the default `local`
 STORAGE_BUCKET=momentsearch-media-yourname
 STORAGE_REGION=us-east-1          # your bucket's real region
 STORAGE_ACCESS_KEY_ID=AKIA...
@@ -93,17 +95,21 @@ STORAGE_SECRET_ACCESS_KEY=...
 
 ### Step 6 — Allow browser uploads (CORS)
 
+Browser uploads go **straight to the bucket**, so it must allow requests from your app's page — without this, uploading fails in the browser (search + playback still work).
+
+> **You don't know your app's address yet** — it comes from Part 2 (the EC2 public IP, `http://YOUR_EC2_IP:8000`). So do this in **two passes**: run it now with just `localhost` (below), then **run it again after Part 2** with your real address added.
+
 ```bash
 aws s3api put-bucket-cors --bucket momentsearch-media-yourname --cors-configuration '{
   "CORSRules": [{
-    "AllowedOrigins": ["https://your-app-address", "http://localhost:8000"],
+    "AllowedOrigins": ["http://localhost:8000"],
     "AllowedMethods": ["PUT","GET"], "AllowedHeaders": ["*"],
     "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3000
   }]
 }'
 ```
 
-Replace `https://your-app-address` with where you'll serve the app (on a bare EC2 box it's `http://YOUR_EC2_IP:8000` at first — update it once you have a domain).
+The address must match **exactly** — scheme (`http`/`https`) + host + port, no trailing slash.
 
 ---
 
@@ -111,9 +117,24 @@ Replace `https://your-app-address` with where you'll serve the app (on a bare EC
 
 ### Easiest: one EC2 box with Docker
 
-**1. Launch EC2** — Ubuntu 22.04, `t3.large` or bigger. In its security group, allow inbound **8000** (the app) and **22** (SSH).
+This uses **two machines** — and knowing which is which is the whole trick:
 
-**2. Connect, install Docker, clone:**
+- 💻 **your computer** — where you use the AWS console / `aws` CLI
+- ☁️ **the EC2 box** — a Linux box you SSH into; it runs Docker + the app
+
+**Every step below is tagged 💻 or ☁️.** Anything tagged ☁️ runs in the EC2 box's **Linux** shell — do **not** paste it into PowerShell.
+
+**1. 💻 On your computer — launch EC2:** Ubuntu 22.04, `t3.large` or bigger. In its security group, allow inbound **8000** (the app) and **22** (SSH). Note its **public IP** and download the key pair.
+
+**2. 💻 On your computer — connect into it** (from the EC2 console's "Connect" button, or):
+
+```bash
+ssh -i your-key.pem ubuntu@YOUR_EC2_IP
+```
+
+Your prompt now changes to something like `ubuntu@ip-...:~$`. **From here on, every ☁️ command runs INSIDE the EC2 box** (Linux) — not in PowerShell. (Type `exit` to leave.)
+
+**3. ☁️ On the EC2 box — install Docker and clone the project:**
 
 ```bash
 sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin git
@@ -121,16 +142,42 @@ sudo usermod -aG docker $USER && newgrp docker
 git clone <your-repo-url> momentsearch && cd momentsearch
 ```
 
-**3. Create `.env`** — the shared keys (Neon, Qdrant, Prefect, OpenAI) plus your storage block from Part 1, plus:
+**4. Get your `.env` onto the box.** Two ways — pick one:
 
-```dotenv
-EMBED_SERVICE_URL=http://clip:8001
-DEPLOY_ENV=production
+**A — you already filled in `.env` on your computer?** Just copy it up. 💻 Run this **on your computer**, from your local repo folder (Step 3's clone must be done first):
+
+```bash
+scp -i your-key.pem .env ubuntu@YOUR_EC2_IP:~/momentsearch/.env
 ```
 
-`EMBED_SERVICE_URL` must be set here (AWS doesn't auto-set it). `DEPLOY_ENV=production` turns on the safety check that warns if any setting is still local.
+**B — starting fresh on the box?** ☁️ Make it from the template and edit it there:
 
-**4. Start it:**
+```bash
+cp .env.example .env     # creates .env from the template
+nano .env                # fill it in  (or vim; save in nano: Ctrl+O, Enter, Ctrl+X)
+```
+
+Fill the shared keys (Neon, Qdrant, Prefect, OpenAI — [DEPLOYMENT.md → the keys you need](../DEPLOYMENT.md#2-the-keys-every-deploy-needs)) and your storage block from Part 1.
+
+**Either way, that `.env` needs DEPLOY values** (not the local preset): `STORAGE_PROVIDER` = your bucket (not `local`), real `DATABASE_URL`/`QDRANT_URL` (not `qdrant`/`postgres` compose hosts), no `COMPOSE_PROFILES`, and `EMBED_SERVICE_URL=http://clip:8001`.
+
+Check it landed — ☁️ on the box:
+
+```bash
+ls -la ~/momentsearch/.env      # should show the file with a real size (not missing / 0 bytes)
+```
+
+> **YouTube links** need cookies or a proxy (the EC2 IP is bot-checked; uploads work without either). For **cookies**: export a `cookies.txt` (how → [README → YouTube ingest](../README.md#youtube-ingest--cookies)), then copy it up like your `.env`:
+> ```bash
+> # ☁️ on the box — make the folder and make sure you own it:
+> mkdir -p ~/momentsearch/secrets
+> sudo chown -R $USER:$USER ~/momentsearch/secrets
+> # 💻 on your computer — copy the file up:
+> scp -i your-key.pem cookies.txt ubuntu@YOUR_EC2_IP:~/momentsearch/secrets/cookies.txt
+> ```
+> …and set `YT_COOKIES_FILE=/app/secrets/cookies.txt` in `.env`. (Prefer a proxy instead? Set `YT_PROXY_URL=...` — see the README.)
+
+**5. ☁️ On the EC2 box — start it:**
 
 ```bash
 docker compose up -d --build
@@ -139,9 +186,22 @@ docker compose logs -f seed        # wait for "sample corpus complete"
 
 First run takes a few minutes (downloads the model, indexes a sample video).
 
-**5. Open** `http://YOUR_EC2_IP:8000/`. For a domain + HTTPS, put an ALB or nginx/Caddy in front.
+**6. 💻 On your computer — open** `http://YOUR_EC2_IP:8000/` in a browser (the EC2 public IP).
 
-**6. Check storage works:**
+> **Now finish CORS.** In Part 1's CORS step you allowed only `localhost`. To let browser **uploads** work from the live app, re-run it with this address added:
+> ```bash
+> aws s3api put-bucket-cors --bucket momentsearch-media-yourname --cors-configuration '{
+>   "CORSRules": [{
+>     "AllowedOrigins": ["http://YOUR_EC2_IP:8000", "http://localhost:8000"],
+>     "AllowedMethods": ["PUT","GET"], "AllowedHeaders": ["*"],
+>     "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3000
+>   }]
+> }'
+> ```
+
+For a domain + HTTPS, put an ALB or nginx/Caddy in front (add that origin to CORS too).
+
+**7. ☁️ On the EC2 box — check storage works:**
 
 ```bash
 docker compose exec api python -c "from src import storage as s; k='_selftest/probe.txt'; print(s.put_bytes(k,b'ok','text/plain')); print(s.head(k)); s.delete_key(k); print('storage OK')"
@@ -149,12 +209,45 @@ docker compose exec api python -c "from src import storage as s; k='_selftest/pr
 
 Then upload a short video in the browser — the real test of the CORS rule.
 
+### Optional — put it on a domain with HTTPS (Caddy)
+
+The steps above serve plain `http://YOUR_EC2_IP:8000`. For real users you want `https://yourdomain.com` (encrypted, a real name). The easiest way is **Caddy** — it fetches a free certificate automatically.
+
+**1. 💻 At your domain registrar — point the domain at the box:** add a DNS **A record** → `yourdomain.com` → `YOUR_EC2_IP`.
+
+**2. 💻 Open ports 80 + 443** in the EC2 **security group** (inbound, TCP 80 and 443) — Caddy needs them for the cert + HTTPS.
+
+**3. ☁️ On the box — install Caddy:**
+
+```bash
+sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt-get update && sudo apt-get install -y caddy
+```
+
+**4. ☁️ On the box — point Caddy at your app.** Put this in `/etc/caddy/Caddyfile` (replace the domain), then reload:
+
+```
+yourdomain.com {
+    reverse_proxy localhost:8000
+}
+```
+
+```bash
+sudo systemctl reload caddy
+```
+
+Caddy gets the HTTPS certificate on its own (give DNS a few minutes to propagate first). Open `https://yourdomain.com` — done.
+
+**5. Update CORS** — add `https://yourdomain.com` to the bucket's allowed origins (re-run the CORS command from **Step 6** with it), or browser uploads fail from the new address.
+
 ### Bigger: ECS / Fargate (for scaling)
 
 Run each part as its own ECS service from the same image. In short:
 
 1. Push the image to ECR.
-2. Put secret values in **Secrets Manager**; put non-secret ones (`STORAGE_*`, `DEPLOY_ENV`, `EMBED_SERVICE_URL`) in the task's plain `environment`.
+2. Put secret values in **Secrets Manager**; put non-secret ones (`STORAGE_*`, `DEPLOY_ENV`, `EMBED_SERVICE_URL`) in the task's plain `environment`. For YouTube, add **`YT_COOKIES_B64`** (base64 of `cookies.txt` — `base64 -w0 cookies.txt`) as a secret; Fargate has no `./secrets` mount.
 3. Three services: **api** (behind an ALB on 8000), **worker** (no ports), **clip** (internal via Service Connect on 8001). Set `EMBED_SERVICE_URL=http://clip.your-namespace.local:8001` on api + worker.
 4. Give the **task role** the S3 policy from Part 1 (then you need no access keys at all).
 5. Run `seed` once as a one-off task after clip is healthy, then add the ALB address to the bucket CORS rule.

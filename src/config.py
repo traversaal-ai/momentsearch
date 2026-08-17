@@ -235,17 +235,23 @@ IMAGE_EMBED_CONCURRENCY = _int("IMAGE_EMBED_CONCURRENCY", 8)
 # -> in-process embedding (simple mode, no extra service). Point it at a GPU
 # machine later — nothing else changes. Ignored for hosted providers: an API
 # has no weights to keep warm, so it is called directly.
-# An explicit EMBED/CLIP_SERVICE_URL wins (docker-compose sets http://clip:8001;
-# the Fly release_command sets it EMPTY to force in-process seeding — a
-# present-but-empty value is a deliberate choice, kept distinct from unset). On
-# Fly with neither set, derive the clip machine's internal address from Fly's own
-# FLY_APP_NAME, so renaming the app touches only the `app =` line in fly.toml and
-# nothing hardcodes the name. Unset off Fly -> in-process embedding.
+# A real EMBED/CLIP_SERVICE_URL wins (docker-compose sets http://clip:8001). The
+# values `none`/`off` (and a present-but-empty string) mean a DELIBERATE "no clip
+# service — embed in-process", and must NOT fall through to the Fly-derived address.
+# Prefer `none`: an EMPTY string can't carry that intent reliably — Fly (and some CI)
+# drop an empty env var, so it reads back as *unset*, wrongly triggering the Fly
+# fallback below and making the release-command seed poll a clip machine that isn't
+# up for its full timeout (a ~10-min hang). On Fly with the var genuinely unset,
+# derive the clip machine's internal address from Fly's own FLY_APP_NAME, so renaming
+# the app touches only the `app =` line in fly.toml. Unset off Fly -> in-process.
 _svc = os.environ.get("EMBED_SERVICE_URL")
 if _svc is None:
     _svc = os.environ.get("CLIP_SERVICE_URL")
-if _svc is not None:
-    EMBED_SERVICE_URL = _svc.strip().rstrip("/")
+_svc = _svc.strip() if _svc is not None else None
+if _svc and _svc.lower() not in ("none", "off", "false"):
+    EMBED_SERVICE_URL = _svc.rstrip("/")
+elif _svc is not None:                     # present-but-empty, or an explicit off-switch
+    EMBED_SERVICE_URL = ""
 elif os.environ.get("FLY_APP_NAME"):
     EMBED_SERVICE_URL = f"http://clip.process.{os.environ['FLY_APP_NAME']}.internal:8001"
 else:

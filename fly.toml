@@ -36,9 +36,13 @@ primary_region = 'iad'
   # Startup gate: index the sample talk BEFORE the new version goes live —
   # if it can't, the deploy aborts and the old version keeps serving, so users
   # never hit a half-indexed app. Runs in a temporary machine where the clip
-  # service isn't up yet, so CLIP_SERVICE_URL= forces in-process embedding.
+  # service isn't up yet, so EMBED_SERVICE_URL=none forces in-process embedding.
+  # (An EMPTY value can't do this: Fly drops empty env vars, so config.py reads it
+  # as unset, falls back to the derived clip.<app>.internal address, and the seed
+  # polls a machine that isn't up for the full timeout — a ~10-min hang. `none` is
+  # the explicit off-switch, handled in src/config.py.)
   # Idempotent + durable (Qdrant Cloud): real work happens only on first deploy.
-  release_command = "sh -c 'CLIP_SERVICE_URL= python -m src.seed'"
+  release_command = "sh -c 'EMBED_SERVICE_URL=none python -m src.seed'"
   # Headroom for a genuine first-deploy index (1 talk embedded in-process). A
   # stuck-but-complete sample is adopted, not re-ingested (src/seeding.py), so
   # this only bites on a truly-fresh Qdrant.

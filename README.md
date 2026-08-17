@@ -81,7 +81,9 @@ Copy `.env.example` (the full, inline-documented reference) and set what you nee
 
 **Feature flags:** `ENABLE_TRANSCRIPT` (the transcript branch), `ENABLE_RERANK` (reranker), `DIARIZE_ENABLED` (speaker recognition master switch), `SEED_SAMPLE_VIDEOS` (index the sample talk on startup).
 
-**YouTube ingest — cookies.** YouTube bot-checks requests **by IP**, so fetching a video — *especially its captions* — can fail with *"Sign in to confirm you're not a bot."* (frames often still index via fallback clients, but the transcript branch has no fallback, so it comes out visual-only). This hits **deploys** (datacenter IP) almost always, and **local** runs increasingly too. If fetching fails, add cookies from a logged-in browser:
+#### YouTube ingest — cookies
+
+YouTube bot-checks requests **by IP**, so fetching a video — *especially its captions* — can fail with *"Sign in to confirm you're not a bot."* (frames often still index via fallback clients, but the transcript branch has no fallback, so it comes out visual-only). This hits **deploys** (datacenter IP) almost always, and **local** runs increasingly too. If fetching fails, add cookies from a logged-in browser:
 
 1. **Get them** — install a "Get cookies.txt" browser extension (e.g. *Get cookies.txt LOCALLY*), open `youtube.com` while signed in, and export a **Netscape-format `cookies.txt`**.
 2. **Add them:**

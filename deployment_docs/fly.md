@@ -104,19 +104,41 @@ fly storage create --name "$APP-media"
 
 > **This needs a full personal Fly token on YOUR OWN org, with billing set up.** A deploy token, or someone else's org (like a shared/personal org you were added to), fails with `Not authorized … createextensiontosagreement`. If that happens: ask the org **owner** to run this one command for you, or use Google/Amazon storage instead (see the note below).
 
-Then turn it on:
+The bucket and its keys are now ready. You'll **switch storage on to Tigris in Step 7** — *after* your `.env` uploads — so the `STORAGE_PROVIDER=local` in your `.env` doesn't overwrite it.
 
-```powershell
-fly secrets set STORAGE_PROVIDER=flyio
-```
-
-That's storage done.
-
-> Want to use Google Cloud or Amazon storage instead? Skip this step and follow [gcp.md](gcp.md#object-storage) or [aws.md](aws.md#object-storage) to make that bucket, then come back to Step 7.
+> **Using Google Cloud (`gcp_native`) or Amazon (`aws`) instead of Tigris?** Then **skip Steps 5 AND 6** — they're Tigris-only. Make your bucket **and set its CORS** by following [gcp.md](gcp.md#object-storage) or [aws.md](aws.md#object-storage), using your Fly URL **`https://<your-app>.fly.dev`** as the CORS origin. Then do Step 7 — but **skip its last line** (`fly secrets set STORAGE_PROVIDER=flyio`), since your `.env` already sets `gcp_native`/`aws`.
+>
+> ⚠️ **Take only the bucket + keys + CORS from that guide — do NOT set `EMBED_SERVICE_URL`.** gcp.md/aws.md tell you to set `EMBED_SERVICE_URL=http://clip:8001`, but that's their **VM** address and **does not exist on Fly**. On Fly, leave `EMBED_SERVICE_URL` **blank** — Fly finds `clip` automatically. (If it's already set, `fly secrets unset EMBED_SERVICE_URL`.)
 
 ---
 
-## Step 6 — Allow uploads from your website
+## Step 6 — Allow uploads from your website (Tigris only)
+
+> **Used GCS or S3, not Tigris? Skip this Tigris step** and set CORS on your **own** bucket instead — run this in **PowerShell, in your repo folder**. It reads your Fly app name from `fly.toml` **and** your bucket from `.env`, so there's **nothing to type**. Then go to Step 7.
+>
+> **GCS (`gcp_native`):**
+> ```powershell
+> $APP    = (Select-String -Path fly.toml -Pattern '^app' | Select-Object -First 1).Line.Split("'")[1]
+> $BUCKET = ((Select-String -Path .env -Pattern '^STORAGE_BUCKET=' | Select-Object -First 1).Line -replace '^STORAGE_BUCKET=','' -replace '#.*','').Trim().Trim('"')
+> Write-Output "origin: https://$APP.fly.dev   bucket: $BUCKET"    # check it looks right
+> @"
+> [{ "origin": ["https://$APP.fly.dev"],
+>    "method": ["PUT", "GET"], "responseHeader": ["Content-Type"], "maxAgeSeconds": 3600 }]
+> "@ | Out-File -Encoding ascii cors.json
+> gcloud storage buckets update gs://$BUCKET --cors-file=cors.json
+> ```
+> **S3 (`aws`):**
+> ```powershell
+> $APP    = (Select-String -Path fly.toml -Pattern '^app' | Select-Object -First 1).Line.Split("'")[1]
+> $BUCKET = ((Select-String -Path .env -Pattern '^STORAGE_BUCKET=' | Select-Object -First 1).Line -replace '^STORAGE_BUCKET=','' -replace '#.*','').Trim().Trim('"')
+> @"
+> { "CORSRules": [{
+>     "AllowedOrigins": ["https://$APP.fly.dev"],
+>     "AllowedMethods": ["PUT","GET"], "AllowedHeaders": ["*"],
+>     "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3000 }] }
+> "@ | Out-File -Encoding ascii cors.json
+> aws s3api put-bucket-cors --bucket $BUCKET --cors-configuration file://cors.json
+> ```
 
 Browser uploads need one setting turned on, or uploading a video will fail. Open the storage settings:
 
@@ -143,19 +165,30 @@ Save it. (Everything else works without this — only *uploading* needs it.)
 
 ## Step 7 — Send your settings to Fly
 
+> ⚠️ **On Fly, leave `EMBED_SERVICE_URL` BLANK in your `.env`.** Fly runs `clip` as its own machine and finds it **automatically** — you don't set an address. If your `.env` has `EMBED_SERVICE_URL=http://clip:8001` (that value comes from the *VM* guides, gcp.md/aws.md, and does **not** exist on Fly), your app will crash with *"clip unreachable / Name or service not known."* So **delete that line** before importing (or fix it later with `fly secrets unset EMBED_SERVICE_URL`).
+
 This copies everything in your `.env` file up to Fly as secrets:
 
 ```powershell
 Get-Content .env |
+  ForEach-Object { $_ -replace '\s+#.*$','' } |                                   # strip inline "# comments" so they don't leak into a value
   Where-Object { $_ -match '^[A-Z_]+=.+' -and $_ -notmatch '^FLY_' -and $_ -notmatch '^YT_COOKIES_FILE=' } |
   fly secrets import
 ```
 
-Using YouTube links? Also run this to send your cookies file:
+**YouTube links** need either **cookies** or a **proxy** to get past Fly's bot-checked IP (uploads work without either) — see **[README → YouTube ingest](../README.md#youtube-ingest--cookies)** to understand both. For the cookies option, send them as a secret:
 
 ```powershell
 $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("secrets/cookies.txt"))
 fly secrets set YT_COOKIES_B64="$b64"
+```
+
+(Proxy instead? `fly secrets set YT_PROXY_URL=http://user:pass@host:port`.)
+
+**Now switch storage on to Tigris** — **Tigris users only. Skip this if you used GCS/S3** (your `.env` already set `gcp_native`/`aws`, which the import above sent up). For Tigris, run this **after** the import so it overrides the `STORAGE_PROVIDER=local` that was in `.env`:
+
+```powershell
+fly secrets set STORAGE_PROVIDER=flyio
 ```
 
 ---
