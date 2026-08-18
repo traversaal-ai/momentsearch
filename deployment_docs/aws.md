@@ -10,7 +10,7 @@ Two parts: **Part 1** sets up an S3 bucket, **Part 2** runs the app. Do them in 
 2. An **AWS account**.
 3. **Docker** installed, and the **`aws`** CLI (installed in Step 1 below).
 
-> One AWS-only setting: you must set **`EMBED_SERVICE_URL`** yourself (Fly sets it automatically, AWS doesn't). It's `http://clip:8001` on a single box.
+> One AWS-only setting: you must set **`EMBED_SERVICE_URL`** yourself (Fly sets it automatically, AWS doesn't). It's `http://clip:8001` on a single instance.
 
 ---
 
@@ -36,7 +36,7 @@ winget install -e --id Amazon.AWSCLI      # Windows
 brew install awscli                        # macOS
 ```
 
-Log in with an IAM user's access key:
+Log in with an IAM user's **access key** — an ID + secret from your AWS account (*new to this? how to get one →* [AWS: access keys](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html) · [video tutorial](https://www.youtube.com/results?search_query=aws+create+access+key+aws+configure+tutorial)):
 
 ```bash
 aws configure          # paste access key, secret, region (e.g. us-east-1), output = json
@@ -79,6 +79,8 @@ aws iam create-policy --policy-name momentsearch-s3 --policy-document file://s3-
 
 Attach that policy to an IAM user in the console (**IAM → Users → your user → Add permissions**), then **create an access key** for that user (**Security credentials → Create access key**). You'll get an **Access key ID** (`AKIA...`) and a **Secret**.
 
+> *New to IAM (users, policies, access keys)? →* [AWS: create an IAM user](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_users_create.html) · [video tutorial](https://www.youtube.com/results?search_query=aws+iam+user+policy+access+key+tutorial).
+
 ### Step 5 — Put it in `.env`
 
 Your `.env` (copied from `.env.example`) has `STORAGE_PROVIDER=local` — **change that line to `aws`** and fill in the rest:
@@ -115,16 +117,23 @@ The address must match **exactly** — scheme (`http`/`https`) + host + port, no
 
 ## Part 2 — Deploy
 
-### Easiest: one EC2 box with Docker
+### Easiest: one EC2 instance with Docker
 
 This uses **two machines** — and knowing which is which is the whole trick:
 
 - 💻 **your computer** — where you use the AWS console / `aws` CLI
-- ☁️ **the EC2 box** — a Linux box you SSH into; it runs Docker + the app
+- ☁️ **the EC2 instance** — a Linux instance you SSH into; it runs Docker + the app
 
-**Every step below is tagged 💻 or ☁️.** Anything tagged ☁️ runs in the EC2 box's **Linux** shell — do **not** paste it into PowerShell.
+**Every step below is tagged 💻 or ☁️.** Anything tagged ☁️ runs in the EC2 instance's **Linux** shell — do **not** paste it into PowerShell.
 
-**1. 💻 On your computer — launch EC2:** Ubuntu 22.04, `t3.large` or bigger. In its security group, allow inbound **8000** (the app) and **22** (SSH). Note its **public IP** and download the key pair.
+**1. 💻 On your computer — launch an EC2 instance** (AWS console → EC2 → *Launch instance*):
+
+- **OS:** Ubuntu 22.04.
+- **Size (instance type):** `t3.large` or bigger — you need about **8 GB RAM + 50 GB disk** (the CLIP model + ffmpeg are the heavy parts; smaller types run out of memory). *Which type to pick →* [AWS EC2 instance types](https://aws.amazon.com/ec2/instance-types/) · [video tutorial](https://www.youtube.com/results?search_query=aws+ec2+choose+instance+type+tutorial).
+- **Security group:** allow inbound **8000** (the app) and **22** (SSH).
+- **Key pair:** download the **`.pem`** file it offers — that's your private key for logging in over SSH. Keep it safe (you **can't** re-download it). *What a key pair is →* [AWS: EC2 key pairs](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-key-pairs.html) · [video tutorial](https://www.youtube.com/results?search_query=aws+ec2+key+pair+pem+ssh+tutorial).
+
+Note the instance's **public IP** once it's running.
 
 **2. 💻 On your computer — connect into it** (from the EC2 console's "Connect" button, or):
 
@@ -132,9 +141,9 @@ This uses **two machines** — and knowing which is which is the whole trick:
 ssh -i your-key.pem ubuntu@YOUR_EC2_IP
 ```
 
-Your prompt now changes to something like `ubuntu@ip-...:~$`. **From here on, every ☁️ command runs INSIDE the EC2 box** (Linux) — not in PowerShell. (Type `exit` to leave.)
+(`your-key.pem` is the key file you downloaded in Step 1; `YOUR_EC2_IP` is the instance's public IP.) Your prompt now changes to something like `ubuntu@ip-...:~$`. **From here on, every ☁️ command runs INSIDE the EC2 instance** (Linux) — not in PowerShell. (Type `exit` to leave.)
 
-**3. ☁️ On the EC2 box — install Docker and clone the project:**
+**3. ☁️ On the EC2 instance — install Docker and clone the project:**
 
 ```bash
 sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin git
@@ -142,7 +151,7 @@ sudo usermod -aG docker $USER && newgrp docker
 git clone <your-repo-url> momentsearch && cd momentsearch
 ```
 
-**4. Get your `.env` onto the box.** Two ways — pick one:
+**4. Get your `.env` onto the instance.** Two ways — pick one:
 
 **A — you already filled in `.env` on your computer?** Just copy it up. 💻 Run this **on your computer**, from your local repo folder (Step 3's clone must be done first):
 
@@ -150,7 +159,7 @@ git clone <your-repo-url> momentsearch && cd momentsearch
 scp -i your-key.pem .env ubuntu@YOUR_EC2_IP:~/momentsearch/.env
 ```
 
-**B — starting fresh on the box?** ☁️ Make it from the template and edit it there:
+**B — starting fresh on the instance?** ☁️ Make it from the template and edit it there:
 
 ```bash
 cp .env.example .env     # creates .env from the template
@@ -161,7 +170,7 @@ Fill the shared keys (Neon, Qdrant, Prefect, OpenAI — [DEPLOYMENT.md → the k
 
 **Either way, that `.env` needs DEPLOY values** (not the local preset): `STORAGE_PROVIDER` = your bucket (not `local`), real `DATABASE_URL`/`QDRANT_URL` (not `qdrant`/`postgres` compose hosts), no `COMPOSE_PROFILES`, and `EMBED_SERVICE_URL=http://clip:8001`.
 
-Check it landed — ☁️ on the box:
+Check it landed — ☁️ on the instance:
 
 ```bash
 ls -la ~/momentsearch/.env      # should show the file with a real size (not missing / 0 bytes)
@@ -169,7 +178,7 @@ ls -la ~/momentsearch/.env      # should show the file with a real size (not mis
 
 > **YouTube links** need cookies or a proxy (the EC2 IP is bot-checked; uploads work without either). For **cookies**: export a `cookies.txt` (how → [README → YouTube ingest](../README.md#youtube-ingest--cookies)), then copy it up like your `.env`:
 > ```bash
-> # ☁️ on the box — make the folder and make sure you own it:
+> # ☁️ on the instance — make the folder and make sure you own it:
 > mkdir -p ~/momentsearch/secrets
 > sudo chown -R $USER:$USER ~/momentsearch/secrets
 > # 💻 on your computer — copy the file up:
@@ -177,7 +186,7 @@ ls -la ~/momentsearch/.env      # should show the file with a real size (not mis
 > ```
 > …and set `YT_COOKIES_FILE=/app/secrets/cookies.txt` in `.env`. (Prefer a proxy instead? Set `YT_PROXY_URL=...` — see the README.)
 
-**5. ☁️ On the EC2 box — start it:**
+**5. ☁️ On the EC2 instance — start it:**
 
 ```bash
 docker compose up -d --build
@@ -201,7 +210,7 @@ First run takes a few minutes (downloads the model, indexes a sample video).
 
 For a domain + HTTPS, put an ALB or nginx/Caddy in front (add that origin to CORS too).
 
-**7. ☁️ On the EC2 box — check storage works:**
+**7. ☁️ On the EC2 instance — check storage works:**
 
 ```bash
 docker compose exec api python -c "from src import storage as s; k='_selftest/probe.txt'; print(s.put_bytes(k,b'ok','text/plain')); print(s.head(k)); s.delete_key(k); print('storage OK')"
@@ -213,11 +222,11 @@ Then upload a short video in the browser — the real test of the CORS rule.
 
 The steps above serve plain `http://YOUR_EC2_IP:8000`. For real users you want `https://yourdomain.com` (encrypted, a real name). The easiest way is **Caddy** — it fetches a free certificate automatically.
 
-**1. 💻 At your domain registrar — point the domain at the box:** add a DNS **A record** → `yourdomain.com` → `YOUR_EC2_IP`.
+**1. 💻 At your domain registrar — point the domain at the instance:** add a DNS **A record** → `yourdomain.com` → `YOUR_EC2_IP`.
 
 **2. 💻 Open ports 80 + 443** in the EC2 **security group** (inbound, TCP 80 and 443) — Caddy needs them for the cert + HTTPS.
 
-**3. ☁️ On the box — install Caddy:**
+**3. ☁️ On the instance — install Caddy:**
 
 ```bash
 sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
@@ -226,7 +235,7 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo 
 sudo apt-get update && sudo apt-get install -y caddy
 ```
 
-**4. ☁️ On the box — point Caddy at your app.** Put this in `/etc/caddy/Caddyfile` (replace the domain), then reload:
+**4. ☁️ On the instance — point Caddy at your app.** Put this in `/etc/caddy/Caddyfile` (replace the domain), then reload:
 
 ```
 yourdomain.com {
@@ -242,7 +251,9 @@ Caddy gets the HTTPS certificate on its own (give DNS a few minutes to propagate
 
 **5. Update CORS** — add `https://yourdomain.com` to the bucket's allowed origins (re-run the CORS command from **Step 6** with it), or browser uploads fail from the new address.
 
-### Bigger: ECS / Fargate (for scaling)
+### Scaling — ECS / Fargate
+
+> **New to this?** **ECS** (Elastic Container Service) with **Fargate** is AWS's way to run your containers across **many machines without managing servers** — it scales them for you, instead of one EC2 instance. It's more setup than the one-instance path above, and **only needed for heavy traffic** — most people can skip it. *Learn it →* [What is ECS](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/Welcome.html) · [What is Fargate](https://docs.aws.amazon.com/AmazonECS/latest/userguide/what-is-fargate.html) · [video tutorial](https://www.youtube.com/results?search_query=aws+ecs+fargate+beginner+tutorial).
 
 Run each part as its own ECS service from the same image. In short:
 
@@ -320,4 +331,4 @@ For faster embedding, run only the `clip` part on a GPU EC2 (`g4dn`/`g5`), built
 - **Browser upload fails (CORS error)** → your app's address isn't in the CORS rule, or doesn't match exactly (scheme + host + port). Fix Step 6.
 - **`AccessDenied` on delete or thumbnails** → the policy is missing `s3:ListBucket` on the bucket, or `s3:DeleteObject`. Re-check Step 4.
 - **Uploads vanish / worker can't find the file** → `STORAGE_PROVIDER` is still `local`. Set it to `aws`.
-- **Can't embed / clip unreachable** → set `EMBED_SERVICE_URL` (`http://clip:8001` on one box).
+- **Can't embed / clip unreachable** → set `EMBED_SERVICE_URL` (`http://clip:8001` on one instance).

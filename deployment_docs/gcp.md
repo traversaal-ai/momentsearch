@@ -88,6 +88,8 @@ gcloud iam service-accounts keys create key.json \
   --iam-account=momentsearch-storage@YOUR_PROJECT_ID.iam.gserviceaccount.com
 ```
 
+This `key.json` is the app's **service-account key** — its private login to the bucket. Keep it safe (Step 4 copies its values into `.env` and deletes the file). *What a service-account key is →* [GCP: create & manage keys](https://cloud.google.com/iam/docs/keys-create-delete) · [video tutorial](https://www.youtube.com/results?search_query=gcp+service+account+key+json+tutorial).
+
 **4. Put the 6 keys into `.env`, then delete `key.json`.** Two ways — pick one:
 
 **Either — run this** (reads `key.json`, writes all 6 lines, deletes the file):
@@ -185,6 +187,8 @@ gcloud compute instances create momentsearch \
 gcloud compute firewall-rules create momentsearch-api \
   --allow=tcp:8000 --target-tags=momentsearch --direction=INGRESS
 ```
+
+`--machine-type=e2-standard-4` = **4 vCPU / 16 GB RAM** and `--boot-disk-size=50GB` = 50 GB disk. You need roughly **8 GB RAM + 50 GB disk** (the CLIP model + ffmpeg are the heavy parts; smaller runs out of memory) — this size covers it. *Pick a different size →* [GCE machine types](https://cloud.google.com/compute/docs/machine-resource) · [video tutorial](https://www.youtube.com/results?search_query=gcp+compute+engine+machine+type+tutorial).
 
 **2. 💻 On your computer — connect into the VM:**
 
@@ -305,7 +309,9 @@ Caddy gets the HTTPS certificate on its own (give DNS a few minutes to propagate
 
 **5. Update CORS** — add `https://yourdomain.com` to the bucket's allowed origins (re-run the CORS command from **Step 6** with it), or browser uploads fail from the new address.
 
-### Bigger: GKE (for scaling)
+### Scaling — GKE
+
+> **New to this?** **GKE** (Google Kubernetes Engine) is Google's managed **Kubernetes** — a system that runs your containers across **many machines** and scales them automatically, instead of one VM. It's more setup than the one-VM path above, and **only needed for heavy traffic** — most people can skip it. *Learn it →* [What is Kubernetes](https://kubernetes.io/docs/concepts/overview/) · [GKE docs](https://cloud.google.com/kubernetes-engine/docs) · [video tutorial](https://www.youtube.com/results?search_query=kubernetes+gke+beginner+tutorial).
 
 For a scaled setup, run each part as its own Kubernetes Deployment. In short:
 
