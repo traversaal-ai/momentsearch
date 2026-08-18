@@ -16,7 +16,7 @@ Two parts: **Part 1** sets up an S3 bucket, **Part 2** runs the app. Do them in 
 
 ## Object storage
 
-Your S3 bucket holds uploaded videos, thumbnails and transcripts. The browser uploads straight to it, so it must be set up right. On AWS there's **one** storage option: **S3** (`STORAGE_PROVIDER=aws`).
+Your bucket holds uploaded videos, thumbnails and transcripts. The browser uploads straight to it, so it must be set up right. **S3** (`STORAGE_PROVIDER=aws`) is the native pick on AWS, and what this guide sets up. But storage is a **free choice** — you can point AWS at **GCS** ([gcp.md](gcp.md#object-storage)) or **Tigris** ([fly.md](fly.md#step-5--make-the-storage-bucket)) instead; only the keys change, nothing else in the deploy.
 
 Two ways to give the app access to the bucket:
 

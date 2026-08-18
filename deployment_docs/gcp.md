@@ -16,7 +16,7 @@ Two parts: **Part 1** sets up a storage bucket, **Part 2** runs the app. Do them
 
 ## Object storage
 
-Your bucket holds uploaded videos, thumbnails and transcripts. The browser uploads straight to it, so it must be set up right.
+Your bucket holds uploaded videos, thumbnails and transcripts. The browser uploads straight to it, so it must be set up right. **GCS** is the native pick on Google Cloud, and what this guide sets up. But storage is a **free choice** — you can point GCP at **S3** ([aws.md](aws.md#object-storage)) or **Tigris** ([fly.md](fly.md#step-5--make-the-storage-bucket)) instead; only the keys change, nothing else in the deploy.
 
 ### First: which Google storage option?
 

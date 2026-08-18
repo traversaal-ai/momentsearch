@@ -180,6 +180,8 @@ point `TEXT_COLLECTION` at a fresh collection and re-index.
 | `voyage` | `voyage-3.5` | 1024 | `VOYAGE_API_KEY` |
 | `jina` | `jina-embeddings-v3` | 1024 | `JINA_API_KEY` |
 
+> **Switching provider? Also update `TEXT_EMBED_MODEL`.** Model names are provider-specific: a pinned name from the old provider (e.g. OpenAI's `text-embedding-3-small`) is sent verbatim to the new one and 404s. Leave `TEXT_EMBED_MODEL` blank to get the new provider's default from the table, or set one of its own models (e.g. Cohere's `embed-multilingual-v3.0`).
+
 ```ini
 # keyless local transcript branch
 TEXT_EMBED_PROVIDER=fastembed
