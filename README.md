@@ -81,48 +81,43 @@ Copy `.env.example` (the full, inline-documented reference) and set what you nee
 
 **Feature flags:** `ENABLE_TRANSCRIPT` (the transcript branch), `ENABLE_RERANK` (reranker), `DIARIZE_ENABLED` (speaker recognition master switch), `SEED_SAMPLE_VIDEOS` (index the sample talk on startup).
 
+### YouTube ingest
+
 <details>
-<summary><b>⚙️ Setting up YouTube ingest (transcripts) — click to expand</b></summary>
+<summary><b>⚙️ Only if a YouTube link won't ingest — click to expand</b></summary>
 
-YouTube bot-checks requests **by IP**, so fetching a video — *especially its captions* — can fail with *"Sign in to confirm you're not a bot."* (frames often still index via fallback clients, but the transcript branch has no fallback, so it comes out visual-only). This hits **deploys** (datacenter IP) almost always, and **local** runs increasingly too. Uploads and search are unaffected — this only touches **YouTube** fetching.
+YouTube bot-checks requests **by IP**, so fetching a video — *especially its captions* — can fail with *"Sign in to confirm you're not a bot."* This hits **deploys** (datacenter IP) almost always, and **local** runs increasingly too. (Uploads and search are never affected — this is YouTube-only.)
 
-Pick **one** of the three below. The `TRANSCRIPT_PROVIDER` setting decides the source:
+Pick **one** of the three:
 
-| `TRANSCRIPT_PROVIDER` | Transcript comes from |
-|---|---|
-| `auto` (default) | **Supadata** if `SUPADATA_API_KEY` is set, otherwise **yt-dlp** captions |
-| `youtube` | always yt-dlp captions (cookies/proxy) |
-| `supadata` | always Supadata (no yt-dlp fallback) |
+#### Option A — SocialKit key (easiest)
 
-#### Option A — Supadata (easiest, no cookies, no IP fight)
+[SocialKit](https://socialkit.dev) is a hosted API that returns **both the transcript and the video** from *its own* servers, so your IP is never the one YouTube blocks — no cookies, no proxy. **Free: 20 credits, then paid.**
 
-[Supadata](https://supadata.ai) is a hosted API that returns captions from **its own** infrastructure, so your IP is never the one YouTube blocks. Free tier ~100 requests/month.
-
-1. Get a free key at [supadata.ai](https://supadata.ai) (starts with `sd_`).
-2. Set it — with `TRANSCRIPT_PROVIDER=auto` (the default) it's used automatically:
+1. Get a key at [socialkit.dev](https://socialkit.dev).
+2. Paste it into `.env` — it's used automatically for both branches, with yt-dlp as the fallback:
    ```
-   SUPADATA_API_KEY=sd_your_key_here
+   SOCIALKIT_API_KEY=your_key_here
    ```
 
-That's it — no cookies, no proxy. **Note:** Supadata provides the *transcript* only; downloading the *video frames* still uses yt-dlp, so on a blocked deploy you may still want cookies/proxy (below) for the visual branch.
+That's it. Docs: [docs.socialkit.dev](https://docs.socialkit.dev).
 
-#### Option B — Cookies (free, self-hosted)
+#### Option B — Cookies (free)
 
-Authenticate yt-dlp with cookies from a logged-in browser:
+Authenticate yt-dlp with cookies from a logged-in browser — **free**, but they expire every ~2–3 weeks.
 
 1. **Get them** — install a "Get cookies.txt" browser extension (e.g. *Get cookies.txt LOCALLY*), open `youtube.com` while signed in, and export a **Netscape-format `cookies.txt`**.
 2. **Add them:**
-   - **Local:** save it to `./secrets/cookies.txt` and set `YT_COOKIES_FILE=/app/secrets/cookies.txt` (compose mounts `./secrets` read-only into the worker and seed; kept out of the `./data` storage tree, and `secrets/` is gitignored).
+   - **Local:** save it to `./secrets/cookies.txt` and set `YT_COOKIES_FILE=/app/secrets/cookies.txt` (compose mounts `./secrets` read-only; it's gitignored).
    - **Deploy:** set `YT_COOKIES_B64=<base64 of cookies.txt>` (no `./secrets` mount there — the worker writes it to a temp file at runtime).
 
-Cookies expire in ~2–3 weeks — re-export when YouTube starts failing again.
+Re-export when YouTube starts failing again.
 
 #### Option C — Residential proxy (paid, hands-off)
 
-- Set `YT_PROXY_URL=http://user:pass@host:port` (Bright Data, Oxylabs, Smartproxy, IPRoyal…). The real problem is the datacenter IP — a residential IP fixes it with no cookies. Paid, per GB.
-- If YouTube still asks for a token, add a PO-token sidecar ([`bgutil-ytdlp-pot-provider`](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)) — free to self-host, no account needed.
+A residential IP gets past the datacenter-IP block with no cookies to refresh — set `YT_PROXY_URL=http://user:pass@host:port` (Bright Data, Oxylabs, IPRoyal…). Paid, per GB. If YouTube still asks for a token, add a free PO-token sidecar ([`bgutil-ytdlp-pot-provider`](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)) — free to self-host, no account.
 
-**In short:** Supadata = free 100/mo, zero setup, transcript-only · cookies = free but re-exported every few weeks · proxy = paid but hands-off and covers frame download too.
+**In short:** SocialKit = 20 free credits then paid, zero setup, covers transcript **and** video · cookies = free but re-exported every few weeks · proxy = paid but hands-off.
 
 </details>
 

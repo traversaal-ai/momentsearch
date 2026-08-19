@@ -317,20 +317,19 @@ TRANSCRIPT_CHUNK_SECONDS = _float("TRANSCRIPT_CHUNK_SECONDS", 20.0)
 TRANSCRIPT_LANGS = [c.strip() for c in
                     os.getenv("TRANSCRIPT_LANGS", "en,en-US,en-GB").split(",") if c.strip()]
 
-# Transcript SOURCE for YOUTUBE videos (uploads always use ASR below, unaffected).
-# yt-dlp captions are free but fetched from YOUR ip, which YouTube bot-checks
-# (see YT_COOKIES_* / YT_PROXY_URL below); Supadata (supadata.ai) is a hosted API
-# that returns the same captions from its OWN infrastructure, sidestepping the ip
-# block — no cookies, no proxy. Free tier: ~100 requests/month.
-#   auto (default) -> Supadata IF SUPADATA_API_KEY is set, else yt-dlp captions.
-#                     In auto a Supadata miss/error falls back to yt-dlp.
-#   youtube        -> always yt-dlp captions (cookies/proxy); never Supadata.
-#   supadata       -> always Supadata, no fallback (needs SUPADATA_API_KEY).
-TRANSCRIPT_PROVIDER = os.getenv("TRANSCRIPT_PROVIDER", "auto").strip().lower()
-SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY", "").strip()
-SUPADATA_BASE_URL = (os.getenv("SUPADATA_BASE_URL", "").strip()
-                     or "https://api.supadata.ai/v1")
-SUPADATA_TIMEOUT = _int("SUPADATA_TIMEOUT", 30)
+# YouTube SOURCE for both the transcript AND the video (uploads use ASR + their
+# own bucket file, unaffected). yt-dlp fetches from YOUR ip, which YouTube
+# bot-checks (see YT_COOKIES_* / YT_PROXY_URL below); SocialKit (socialkit.dev)
+# is a hosted API that returns BOTH the captions and the video from its OWN
+# infrastructure, sidestepping the ip block — no cookies, no proxy. Set the key
+# to use it for both branches (yt-dlp is the automatic fallback on any
+# miss/error); leave it blank to use yt-dlp only. Free: 20 credits, then paid.
+# Docs: https://docs.socialkit.dev
+SOCIALKIT_API_KEY = os.getenv("SOCIALKIT_API_KEY", "").strip()
+SOCIALKIT_BASE_URL = (os.getenv("SOCIALKIT_BASE_URL", "").strip()
+                      or "https://api.socialkit.dev")
+SOCIALKIT_VIDEO_QUALITY = os.getenv("SOCIALKIT_VIDEO_QUALITY", "480p").strip()
+SOCIALKIT_TIMEOUT = _int("SOCIALKIT_TIMEOUT", 60)
 
 # --- Speech-to-text (ASR) for UPLOADS ------------------------------------------
 # YouTube hands us captions; uploaded files don't, so their transcript branch is

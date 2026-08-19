@@ -176,7 +176,7 @@ Get-Content .env |
   fly secrets import
 ```
 
-**YouTube links** need either **cookies** or a **proxy** to get past Fly's bot-checked IP (uploads work without either) — see **[README → YouTube ingest](../README.md#youtube-ingest--cookies)** to understand both. For the cookies option, send them as a secret:
+**YouTube links** need a **SocialKit key** (easiest — one key covers transcript + video, set `SOCIALKIT_API_KEY` in your `.env`/secrets), **cookies**, or a **proxy** to get past Fly's bot-checked IP (uploads work without any) — see **[README → YouTube ingest](../README.md#youtube-ingest)** for all three. For the cookies option, send them as a secret:
 
 ```powershell
 $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("secrets/cookies.txt"))

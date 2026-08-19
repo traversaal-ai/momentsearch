@@ -124,13 +124,25 @@ def _yt_download(url: str, video_id: str, clients: list[str]) -> tuple[Path, str
 
 
 def fetch_youtube(url: str, video_id: str) -> tuple[Path, str]:
-    """Download via yt-dlp. Returns (path, title).
+    """Download the video. Returns (path, title).
 
-    Uses a robust multi-client list on the first try (see _yt_opts). If it
-    still fails, retries once with the wider fallback set. Persistent failure
-    across ALL videos usually means the IP is blocked (datacenter deploy) —
-    set YT_COOKIES_FILE or YT_PROXY_URL then (see .env.example)."""
-    from ..config import YT_PLAYER_CLIENTS, YT_FALLBACK_CLIENTS
+    SocialKit (when SOCIALKIT_API_KEY is set) downloads from its own servers,
+    sidestepping the by-IP block; on any failure it falls back to yt-dlp. With
+    no key it's yt-dlp only: a robust multi-client list on the first try (see
+    _yt_opts), retried once with the wider fallback set. Persistent yt-dlp
+    failure across ALL videos usually means the IP is blocked (datacenter
+    deploy) — set SOCIALKIT_API_KEY, or YT_COOKIES_FILE / YT_PROXY_URL then
+    (see .env.example)."""
+    from ..config import (SOCIALKIT_API_KEY, YT_FALLBACK_CLIENTS,
+                          YT_PLAYER_CLIENTS)
+
+    if SOCIALKIT_API_KEY:
+        from .socialkit import fetch_video_socialkit
+        hit = fetch_video_socialkit(url, video_id)
+        if hit:
+            return hit
+        print(f"[fetch] {video_id}: SocialKit download unavailable — "
+              "falling back to yt-dlp")
 
     try:
         return _yt_download(url, video_id, YT_PLAYER_CLIENTS)
