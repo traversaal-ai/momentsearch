@@ -129,6 +129,14 @@ function momentCard(c, i){
   // Who said it (diarization), when present.
   const spk = c.speaker
     ? `<div class="text-[10px] font-600 text-coral2 mt-1 truncate">🎙 ${esc(c.speaker)}</div>` : "";
+  // Relevance as a real "% match" (the moment's match strength, computed server-side
+  // in src/rag/search.py — NOT the rank-based score). Banded in the app's green /
+  // amber; falls back to the raw score if an older response has no `match`.
+  const m = c.match;
+  const relCls = m>=80 ? "text-[#1f7a43]" : m>=65 ? "text-[#8a6d1a]" : "text-muted";
+  const rel = (m!=null)
+    ? `<span class="text-[11px] font-600 ${relCls} ml-auto" title="how strongly this moment matched your question">${m}% match</span>`
+    : `<span class="text-[11px] text-muted ml-auto">score ${c.score}</span>`;
   return `
   <button class="source pop text-left bg-card border border-line rounded-2xl overflow-hidden shadow-sm hover:border-coral transition" data-n="${c.n}" style="--i:${i||0}">
     <div class="aspect-video bg-paper2 overflow-hidden">${thumb}</div>
@@ -137,7 +145,7 @@ function momentCard(c, i){
         <span class="text-[10px] font-bold text-white bg-coral rounded px-1.5 py-0.5">${c.n}</span>
         <span class="text-[11px] text-muted">${esc(c.timestamp)}</span>
         ${modTags(c.modalities)}
-        <span class="text-[11px] text-muted ml-auto">score ${c.score}</span>
+        ${rel}
       </div>
       <div class="text-[12px] font-600 leading-snug line-clamp-2">${esc(c.title||c.video_id)}</div>
       ${spk}

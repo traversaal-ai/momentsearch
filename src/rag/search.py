@@ -100,6 +100,36 @@ def _media_url(video: dict | None, user_id: str, video_id: str) -> str | None:
     return f"/api/video/{video_id}?u={user_id}"
 
 
+def _match_pct(w: dict) -> int:
+    """A 0-100 'match %' for the card — the moment's REAL strength, not its rank.
+
+    RRF/blend are rank-based and squash together (rank 1/2/3 = 0.0164/0.0161/0.0159),
+    so a naive score-vs-top would show every result at ~99%. Instead we read the raw
+    branch signal: the reranker's 0-1 relevance when the moment was judged, else the
+    raw cosine mapped between its gate threshold (weak) and its STRONG threshold.
+    Take the strongest branch. Shown moments already cleared the gate, so the display
+    is floored at BASE — nothing legitimate ever reads as ~0%."""
+    def _norm(v: float, lo: float, hi: float) -> float:
+        if hi <= lo:
+            return 1.0 if v >= hi else 0.0
+        return max(0.0, min(1.0, (v - lo) / (hi - lo)))
+
+    strengths = []
+    fr = w.get("frame")
+    if fr:
+        strengths.append(_norm(fr.get("score", 0.0),
+                               config.CONFIDENCE_THRESHOLD, config.VISUAL_STRONG))
+    tx = w.get("text")
+    if tx:
+        # The reranker already outputs a 0-1 relevance; prefer it when present.
+        strengths.append(w["rerank"] if "rerank" in w else
+                         _norm(tx.get("score", 0.0),
+                               config.TEXT_CONFIDENCE_THRESHOLD, config.TEXT_STRONG))
+    s = max(strengths) if strengths else 0.0
+    BASE = 50   # a just-cleared moment reads ~50%, a clearly-strong one ~100%
+    return int(round(BASE + s * (100 - BASE)))
+
+
 def _rerank(question: str, windows: list[dict]) -> list[dict]:
     """Cross-encoder rerank of the text-bearing moments — RRF is rank-blind, this
     restores real relevance (src/rag/rerank.py).
@@ -236,6 +266,7 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
             "media_url": _media_url(meta, owner, vid),
             "deeplink": _deeplink(meta, vid, ms),
             "score": round(w.get("blend", w["rrf"]), 4),
+            "match": _match_pct(w),   # 0-100 real match strength (what the UI shows)
             "transcript": (tx or {}).get("text"),
             "speaker": (tx or {}).get("speaker"),   # who said it (diarized), if any
             "modalities": sorted(w["modalities"]),

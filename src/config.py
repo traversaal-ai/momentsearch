@@ -506,6 +506,11 @@ TEXT_CONFIDENCE_THRESHOLD = _float("TEXT_CONFIDENCE_THRESHOLD", _TXT.threshold) 
 # relevant transcript moment, while a real visual answer (a slide/diagram) still
 # wins. Only affects ranking when the reranker runs; pure-visual videos unchanged.
 VISUAL_STRONG = _float("VISUAL_STRONG", 0.45)
+# The transcript equivalent of VISUAL_STRONG: the raw text cosine at which a
+# transcript match counts as STRONG. Used to turn a moment's raw match strength
+# into the "% match" the UI shows (gate -> low %, strong -> ~100%). bge text
+# cosines run ~0.5-0.7 for real matches, so 0.65 reads as a clearly-strong hit.
+TEXT_STRONG = _float("TEXT_STRONG", 0.65)
 
 # --- Multimodal LLM (answer synthesis only — retrieval works without it) -----------
 # LLM_PROVIDER is a name from registry.LLM_PRESETS — openai, gemini, anthropic,
