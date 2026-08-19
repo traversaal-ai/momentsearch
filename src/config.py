@@ -317,6 +317,21 @@ TRANSCRIPT_CHUNK_SECONDS = _float("TRANSCRIPT_CHUNK_SECONDS", 20.0)
 TRANSCRIPT_LANGS = [c.strip() for c in
                     os.getenv("TRANSCRIPT_LANGS", "en,en-US,en-GB").split(",") if c.strip()]
 
+# Transcript SOURCE for YOUTUBE videos (uploads always use ASR below, unaffected).
+# yt-dlp captions are free but fetched from YOUR ip, which YouTube bot-checks
+# (see YT_COOKIES_* / YT_PROXY_URL below); Supadata (supadata.ai) is a hosted API
+# that returns the same captions from its OWN infrastructure, sidestepping the ip
+# block — no cookies, no proxy. Free tier: ~100 requests/month.
+#   auto (default) -> Supadata IF SUPADATA_API_KEY is set, else yt-dlp captions.
+#                     In auto a Supadata miss/error falls back to yt-dlp.
+#   youtube        -> always yt-dlp captions (cookies/proxy); never Supadata.
+#   supadata       -> always Supadata, no fallback (needs SUPADATA_API_KEY).
+TRANSCRIPT_PROVIDER = os.getenv("TRANSCRIPT_PROVIDER", "auto").strip().lower()
+SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY", "").strip()
+SUPADATA_BASE_URL = (os.getenv("SUPADATA_BASE_URL", "").strip()
+                     or "https://api.supadata.ai/v1")
+SUPADATA_TIMEOUT = _int("SUPADATA_TIMEOUT", 30)
+
 # --- Speech-to-text (ASR) for UPLOADS ------------------------------------------
 # YouTube hands us captions; uploaded files don't, so their transcript branch is
 # produced by ASR from the file's OWN audio (src/ingest/asr.py). The cues come

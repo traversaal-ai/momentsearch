@@ -145,14 +145,14 @@ def t_transcript(video_id: str, user_id: str, path: str | None = None) -> int:
     branches first)."""
     from ..config import ENABLE_TRANSCRIPT, TEXT_EMBED_VERSION
     from ..rag.embeddings import embed_docs
-    from .transcript import chunk_cues, fetch_transcript
+    from .transcript import chunk_cues, get_youtube_cues
 
     if not ENABLE_TRANSCRIPT:
         return 0
     row = db.get_video(video_id) or {}
     try:
         if row.get("source") == "youtube" and row.get("url"):
-            cues, origin, empty_note = fetch_transcript(row["url"], video_id), "captions", "no captions"
+            cues, origin, empty_note = get_youtube_cues(row["url"], video_id), "captions", "no captions"
         elif path:
             from .asr import transcribe
             cues, origin, empty_note = transcribe(path), "ASR", "no speech"

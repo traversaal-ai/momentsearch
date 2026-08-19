@@ -79,6 +79,35 @@ def fetch_transcript(url: str, video_id: str) -> list[dict]:
     return []
 
 
+def get_youtube_cues(url: str, video_id: str) -> list[dict]:
+    """Pick the transcript SOURCE for a YouTube video per TRANSCRIPT_PROVIDER.
+
+      supadata -> Supadata only.
+      youtube  -> yt-dlp captions only (cookies/proxy, the original path).
+      auto     -> Supadata if SUPADATA_API_KEY is set (falling back to yt-dlp on
+                  an empty result or error), else yt-dlp captions.
+
+    Both sources return the same [{text,t_start,t_end}] cues, so everything
+    downstream is identical. See src/config.py TRANSCRIPT_PROVIDER."""
+    provider = config.TRANSCRIPT_PROVIDER
+
+    if provider == "supadata":
+        from .supadata import fetch_transcript_supadata
+        return fetch_transcript_supadata(url, video_id)
+
+    if provider == "auto" and config.SUPADATA_API_KEY:
+        from .supadata import fetch_transcript_supadata
+        cues = fetch_transcript_supadata(url, video_id)
+        if cues:
+            return cues
+        print(f"[transcript] {video_id}: Supadata returned nothing — "
+              "falling back to yt-dlp captions")
+        return fetch_transcript(url, video_id)
+
+    # provider == "youtube", or auto with no Supadata key configured.
+    return fetch_transcript(url, video_id)
+
+
 def chunk_cues(cues: list[dict], chunk_seconds: float | None = None) -> list[dict]:
     """Group cues into ~chunk_seconds passages, each with t_start/t_end.
 
