@@ -1,21 +1,18 @@
 # Examples
 
-## `quickstart.py` — ingest four LLM talks and ask visual questions
+## `quickstart.py` — ingest one LLM talk and ask visual questions
 
-A tiny end-to-end starter. It ingests four visually-rich LLM talks/explainers and
+A tiny end-to-end starter. It ingests one visually-rich LLM talk/explainer and
 then queries them by **what's on screen** — diagrams, animations, slides.
 
 The demo corpus:
 
 | Video | Length | Why it's here |
 |---|---|---|
-| 3Blue1Brown — *LLMs explained briefly* | 8m | clean animated explainers |
-| 3Blue1Brown — *Transformers, the tech behind LLMs* | 27m | network/embedding diagrams |
-| 3Blue1Brown — *Attention in transformers, step-by-step* | 26m | attention-matrix visuals |
-| Andrej Karpathy — *[1hr Talk] Intro to LLMs* | 60m | slide-based talk on stage |
+| 3Blue1Brown — *LLMs explained briefly* | 8m | clean animated explainers; short, so a fresh clone seeds fast |
 
 > **Note:** if you run the app with `docker compose up`, the worker
-> **auto-ingests these four talks on first boot** (`SEED_SAMPLE_VIDEOS=true`)
+> **auto-ingests this talk on first boot** (`SEED_SAMPLE_VIDEOS=true`)
 > — no manual step needed. This script is the manual, in-process route, plus
 > a terminal demo of the sample queries.
 
@@ -26,7 +23,7 @@ The demo corpus:
 docker run -p 6333:6333 qdrant/qdrant
 pip install -r requirements.txt
 
-# 2. Ingest the four videos and run the sample queries
+# 2. Ingest the video and run the sample queries
 python examples/quickstart.py
 ```
 
@@ -50,4 +47,5 @@ MomentSearch reads the **picture** for every video, and for **YouTube** also the
 **transcript** (captions), fusing the two. Talks with slides, diagrams, demos, and
 code (like these) are an ideal fit for the visual side. For pure talking-head
 podcasts the visual signal is thin — but on YouTube the transcript branch still
-surfaces what was *said*. Uploaded (non-YouTube) files are visual-only for now.
+surfaces what was *said*. Uploaded (non-YouTube) files are transcribed via Whisper
+(ASR) when they're captionless, so they get the same transcript branch.

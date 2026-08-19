@@ -1,0 +1,91 @@
+# What the build context is allowed to contain.
+#
+# The Dockerfile only ever COPYs three things — requirements.txt, src/ and ui/.
+# Everything listed here is either secret (.env), enormous (downloaded videos,
+# model weights), or noise the build daemon has no reason to see. Keeping the
+# context small also keeps `fly deploy --remote-only` fast, since the whole
+# context is uploaded to the remote builder on every deploy.
+#
+# PATTERN SEMANTICS — the thing that makes these files silently useless:
+# patterns are matched against each file's path RELATIVE TO THE CONTEXT ROOT,
+# and a lone `*` never crosses a `/`. So `__pycache__/` matches ONLY a
+# root-level __pycache__ — not src/__pycache__, not src/api/__pycache__. Any
+# pattern meant to apply at any depth needs the `**/` prefix. Patterns without
+# it below are deliberately root-anchored (data/, .git/, fly.toml, ...).
+#
+# Deliberately NOT ignored: requirements.txt, requirements-clip.txt (the torch
+# stack the fat app image and Dockerfile.clip install), src/, ui/.
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# Never in a build context. Runtime config arrives as env vars / Fly secrets;
+# compose mounts .env at run time (see config.py's load_dotenv note), which is
+# a volume mount, not a copy — so excluding it here changes nothing at runtime.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/cookies.txt
+# The whole secrets/ tree, not just cookies.txt: it's mounted at run time
+# (docker-compose mounts ./secrets read-only into worker + seed) and anything
+# else parked there — a service-account JSON, a proxy list — has no business
+# being uploaded to a remote builder either.
+secrets/
+
+# ── Runtime data ──────────────────────────────────────────────────────────────
+# Raw uploads, extracted frames, local-provider storage, local Qdrant. This is
+# the directory that makes an un-ignored context gigabytes wide.
+data/
+qdrant_storage/
+
+# ── Model caches ──────────────────────────────────────────────────────────────
+# The image downloads its own weights at runtime into /root/.cache (the
+# hf_cache volume in compose). A host-side cache must never be baked in.
+**/.cache/
+**/*.pt
+**/*.onnx
+**/*.safetensors
+
+# ── Python ────────────────────────────────────────────────────────────────────
+# Bytecode is the one that actually bloats the shipped layers: src/ is ~1.3 MB
+# on disk but only ~350 KB of .py, and the rest is stale .pyc — including
+# cpython-314 artifacts that a python:3.11 image can't even load. Excluding it
+# also stops a local test run from invalidating the COPY cache layer.
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+.venv/
+venv/
+env/
+.python-version
+
+# ── VCS and CI ────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# ── Docs and non-shipping code ────────────────────────────────────────────────
+# Nothing in the image reads markdown. examples/ and benchmark/ are run from a
+# clone, not from the container.
+**/*.md
+LICENSE
+NOTICE
+examples/
+benchmark/
+
+# ── Host-side deploy configs ──────────────────────────────────────────────────
+# Read by flyctl / docker compose on the HOST; the container never sees them.
+# (Dockerfile, Dockerfile.clip and .dockerignore are intentionally NOT listed —
+# the builder needs them, and excluding them buys nothing.)
+fly*.toml
+docker-compose*.yml
+
+# ── Editor and OS ─────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+**/.DS_Store
+**/Thumbs.db
+**/*.log

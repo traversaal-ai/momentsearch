@@ -11,6 +11,9 @@ env/
 .env
 .env.*
 !.env.example
+!.env.local.example
+# Local secret files (YouTube cookies etc.) — mounted into containers, never committed
+secrets/
 
 # Runtime data (videos, extracted frames, qdrant storage)
 data/
@@ -29,8 +32,9 @@ dist/
 # Benchmark
 benchmark/
 
-# Internal design notes (not published)
-MULTIMODAL_RETRIEVAL.md
+
+# Internal presentations (not published)
+*.pptx
 
 # OS / editor
 .DS_Store

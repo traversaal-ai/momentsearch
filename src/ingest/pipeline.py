@@ -59,7 +59,19 @@ def t_fetch(video_id: str, user_id: str) -> str:
     dup = db.find_duplicate(user_id, source_hash, exclude_id=video_id)
     if dup:
         path.unlink(missing_ok=True)
+        # This stub's own raw upload in the bucket is now orphaned — it skipped
+        # before sampling, so it has no frames/transcript, only the raw file.
+        # Remove it so a re-upload doesn't leak a video object on GCP.
+        if row.get("storage_key"):
+            storage.delete_key(row["storage_key"])
+        # Re-upload of content the user already has indexed (e.g. they deleted the
+        # session and added the same file again). Don't leave a dead "duplicate"
+        # card: hand the working original to whatever session(s) this attempt was
+        # dropped into, then drop this redundant stub.
         db.set_status(video_id, "skipped", error=f"duplicate of {dup['id']}")
+        db.resolve_duplicate(video_id, dup["id"])
+        print(f"[fetch] {video_id}: duplicate of {dup['id']} — linked original, "
+              f"dropped stub + its raw upload")
         return ""
     return str(path)
 
@@ -121,33 +133,65 @@ def t_embed_index(video_id: str, user_id: str, frames: list[Frame]) -> int:
 
 
 @task(name="transcript", retries=1, retry_delay_seconds=30)
-def t_transcript(video_id: str, user_id: str) -> int:
-    """YouTube captions -> time chunks -> bge -> text collection (the 2nd
-    branch). Best-effort: uploads have no captions, some videos have none, and
-    any failure just leaves the video visual-only — never fails the flow.
-    Runs AFTER embed-index (whose delete clears both branches first)."""
+def t_transcript(video_id: str, user_id: str, path: str | None = None) -> int:
+    """The 2nd (text) branch -> time chunks -> text embeddings -> text collection.
+
+    Source of the cues depends on where the video came from:
+      * YouTube -> captions (yt-dlp; fast, free, already timestamped)
+      * upload  -> ASR from the file's own audio (src/ingest/asr.py, whisper-1)
+    Both yield [{text,t_start,t_end}], so everything below is identical. Best-
+    effort: no captions, no audio, or any failure just leaves the video visual-
+    only — never fails the flow. Runs AFTER embed-index (whose delete clears both
+    branches first)."""
     from ..config import ENABLE_TRANSCRIPT, TEXT_EMBED_VERSION
     from ..rag.embeddings import embed_docs
-    from .transcript import chunk_cues, fetch_transcript
+    from .transcript import chunk_cues, get_youtube_cues
 
     if not ENABLE_TRANSCRIPT:
         return 0
     row = db.get_video(video_id) or {}
-    if row.get("source") != "youtube" or not row.get("url"):
-        return 0  # uploaded files have no caption track
     try:
-        chunks = chunk_cues(fetch_transcript(row["url"], video_id))
+        if row.get("source") == "youtube" and row.get("url"):
+            cues, origin, empty_note = get_youtube_cues(row["url"], video_id), "captions", "no captions"
+        elif path:
+            from .asr import transcribe
+            cues, origin, empty_note = transcribe(path), "ASR", "no speech"
+        else:
+            return 0  # nothing to transcribe (e.g. upload with the scratch file gone)
+        # Speaker diarization ("who said what") — opt-in per video. Gemini labels
+        # who said each cue; failure/keyless just leaves the cues unlabeled.
+        if cues and row.get("diarize"):
+            from .diarize import diarize_cues
+            cues, speakers = diarize_cues(
+                cues, source=row.get("source"), url=row.get("url"), path=path,
+                video_id=video_id, title=row.get("title"))
+            if speakers:
+                print(f"[transcript] {video_id}: diarized speakers={speakers}")
+        chunks = chunk_cues(cues)
         if not chunks:
-            print(f"[transcript] {video_id}: no captions — visual-only")
+            print(f"[transcript] {video_id}: {empty_note} — visual-only")
             return 0
+        # Persist a durable copy of the timed transcript to object storage — so a
+        # future re-embed (e.g. swapping the text model) doesn't have to re-fetch
+        # captions from YouTube. Best-effort: a store failure never blocks
+        # indexing (the vectors below are the thing that must succeed).
+        try:
+            import json
+            storage.put_bytes(
+                storage.transcript_key(user_id, video_id),
+                json.dumps(chunks, ensure_ascii=False).encode("utf-8"),
+                "application/json")
+        except Exception as exc:
+            print(f"[transcript] {video_id}: bucket store failed ({exc}) — indexing anyway")
         vector_store.ensure_text_collection()
         vecs = embed_docs([c["text"] for c in chunks])
         vector_store.upsert_chunks(user_id, video_id, vecs, payloads=[
             {"user_id": user_id, "video_id": video_id, "modality": "text",
              "t_start": c["t_start"], "t_end": c["t_end"],
              "ms": int(c["t_start"] * 1000), "text": c["text"],
+             **({"speaker": c["speaker"]} if c.get("speaker") else {}),
              "embed_version": TEXT_EMBED_VERSION} for c in chunks])
-        print(f"[transcript] {video_id}: indexed {len(chunks)} transcript chunks")
+        print(f"[transcript] {video_id}: indexed {len(chunks)} transcript chunks ({origin})")
         return len(chunks)
     except Exception as exc:
         print(f"[transcript] {video_id}: failed ({type(exc).__name__}: {exc}) — visual-only")
@@ -166,7 +210,8 @@ def ingest_video(video_id: str, user_id: str) -> dict:
         frames = t_sample(video_id, user_id, path)
         n = t_embed_index(video_id, user_id, frames)
         # Transcript branch AFTER frames (embed-index's delete clears both first).
-        t = t_transcript(video_id, user_id)
+        # Pass the scratch file: uploads have no captions, so ASR reads its audio.
+        t = t_transcript(video_id, user_id, path)
         print(f"[ingest] {video_id} indexed: {n} frames + {t} transcript chunks (attempt {attempt})")
         return {"video_id": video_id, "frames": n, "transcript_chunks": t}
     except Exception as exc:

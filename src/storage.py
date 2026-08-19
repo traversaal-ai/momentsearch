@@ -19,13 +19,13 @@ upload, and prefix listing + batch delete (a video's frames go in one call).
 from __future__ import annotations
 
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 
 from .config import (
     AWS_REGION,
     DATA,
-    FRAME_KEY_PREFIX,
     PRESIGN_EXPIRY_S,
     PRESIGN_GET_EXPIRY_S,
     STORAGE_ACCESS_KEY_ID,
@@ -33,7 +33,6 @@ from .config import (
     STORAGE_ENDPOINT,
     STORAGE_PROVIDER,
     STORAGE_SECRET_ACCESS_KEY,
-    UPLOAD_KEY_PREFIX,
     gcs_service_account_info,
 )
 
@@ -42,16 +41,31 @@ _client = None
 
 # ── Key layout (every key user-scoped — tenant isolation at the path level) ──
 
+def video_prefix(user_id: str, video_id: str) -> str:
+    """Everything for ONE video lives under this single prefix — its frames, its
+    source upload and its transcript. So a video's whole footprint is one prefix
+    delete, and a user's whole footprint is `<user_id>/`. Content-addressed by
+    (owner, video): sessions are pointers in Postgres, never in the key."""
+    return f"{user_id}/{video_id}/"
+
+
 def upload_key(user_id: str, video_id: str, ext: str) -> str:
-    return f"{UPLOAD_KEY_PREFIX}{user_id}/{video_id}{ext}"
+    return f"{video_prefix(user_id, video_id)}source{ext}"
 
 
 def frame_key(user_id: str, video_id: str, index: int) -> str:
-    return f"{FRAME_KEY_PREFIX}{user_id}/{video_id}/{index:06d}.jpg"
+    return f"{video_prefix(user_id, video_id)}frames/{index:06d}.jpg"
 
 
 def frame_prefix(user_id: str, video_id: str) -> str:
-    return f"{FRAME_KEY_PREFIX}{user_id}/{video_id}/"
+    return f"{video_prefix(user_id, video_id)}frames/"
+
+
+def transcript_key(user_id: str, video_id: str) -> str:
+    """Durable copy of a video's timed transcript (JSON: [{text,t_start,t_end}]).
+    Lets us re-embed transcripts (e.g. on a text-model swap) without re-fetching
+    captions from YouTube — the same reason akash persists its transcripts."""
+    return f"{video_prefix(user_id, video_id)}transcript.json"
 
 
 def _s3():
@@ -220,11 +234,22 @@ def delete_prefix(prefix: str) -> int:
     elif STORAGE_PROVIDER == "gcp_native":
         from google.api_core.exceptions import NotFound
         bucket = _gcs_bucket()
-        for k in keys:
+
+        def _rm(k: str) -> None:
             try:  # a stale listing may name an object already gone — ignore it
                 bucket.blob(k).delete()
             except NotFound:
                 pass
+
+        # One HTTP round trip per object, and GCS has no batch-delete verb. Serial
+        # that was ~250ms x N — a 200-frame video took the better part of a minute
+        # and a delete looked hung. These calls are pure network wait, so threads
+        # collapse it to roughly N/16 round trips.
+        if len(keys) > 1:
+            with ThreadPoolExecutor(max_workers=min(16, len(keys))) as ex:
+                list(ex.map(_rm, keys))
+        else:
+            _rm(keys[0])
     else:
         for i in range(0, len(keys), 1000):  # S3 DeleteObjects caps at 1000/call
             _s3().delete_objects(

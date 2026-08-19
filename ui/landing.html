@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MomentSearch — search inside video by what's on screen</title>
+<link rel="icon" href="/ui/assets/momentsearch-mark.svg">
+<link rel="apple-touch-icon" href="/ui/assets/traversaal-mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    colors: { paper:"#FBF7F0", paper2:"#F3ECE0", card:"#FFFFFF", ink:"#1E1B16",
+              muted:"#6B6357", line:"#E7DECF", coral:"#FF5A3C", coral2:"#E8472B" },
+    fontFamily: { serif:['Fraunces','Georgia','serif'], sans:['Inter','system-ui','sans-serif'] },
+  }}}
+</script>
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body class="min-h-screen bg-paper text-ink flex flex-col">
+
+<div class="grain" aria-hidden="true"></div>
+
+<header class="border-b border-line">
+  <div class="max-w-5xl mx-auto px-6 py-4 flex items-center gap-3">
+    <!-- The wordmark: the "o" of Moment is the play button (see .brandO in
+         app.css), so there's no separate logo tile — and Traversaal sits
+         directly under the product rather than beside it, competing with it. -->
+    <div class="brandLock">
+      <a href="/" class="brandMain" aria-label="MomentSearch home">
+        <span class="brandName text-[22px]">M<svg class="brandO" viewBox="4 4 56 56" aria-hidden="true">
+          <circle cx="32" cy="32" r="23" fill="none" stroke="currentColor" stroke-width="7"/>
+          <path d="M27 21v22l19-11Z" fill="currentColor"/>
+          <circle cx="49" cy="47" r="6" fill="#FF5A3C" stroke="#FBF7F0" stroke-width="2"/>
+        </svg>ment<span class="brandSearch">Search</span></span>
+      </a>
+      <a href="https://traversaal.ai" target="_blank" rel="noopener"
+         class="brandBy" title="Powered by Traversaal.ai">
+        <span>Powered by</span>
+        <img src="/ui/assets/traversaal-logo-light.png" alt="Traversaal.ai">
+      </a>
+    </div>
+
+    <!-- No "Workspace →" pill up here. The hero's primary button below goes to
+         the same place, and two identical calls to action on one screen make you
+         wonder whether they differ. The other pages keep theirs — they have no
+         hero CTA. -->
+    <a href="https://github.com/traversaal-ai/momentsearch"
+       class="ml-auto text-xs text-muted hover:text-ink">GitHub ↗</a>
+  </div>
+</header>
+
+<main class="flex-1 max-w-5xl w-full mx-auto px-6 flex flex-col justify-center py-16">
+
+  <div class="text-center">
+    <div class="rise inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-7" style="--d:0">
+      ● Open source · Apache 2.0
+    </div>
+    <h1 id="heroTitle" class="display text-5xl sm:text-6xl font-bold leading-[1.08] tracking-tight"></h1>
+    <p class="rise mt-6 text-[18px] text-muted leading-relaxed mx-auto max-w-xl" style="--d:6">
+      Ask a question and get the exact second it happens — matched on what's
+      <b class="text-ink font-600">shown on screen</b>, not just what's said.
+    </p>
+
+    <!-- One door in, and a side entrance for the read-only samples. There is no
+         sign-in step, so the primary button goes straight to the workspace. -->
+    <div class="rise mt-9 flex flex-wrap gap-3 justify-center" style="--d:8">
+      <a href="/app" class="bg-coral hover:bg-coral2 text-white font-semibold rounded-xl px-7 py-3.5 transition shadow-sm">
+        Open the workspace →
+      </a>
+      <a href="/demo" class="bg-card border border-line hover:border-coral text-ink font-semibold rounded-xl px-7 py-3.5 transition">
+        Search the samples
+      </a>
+    </div>
+    <p class="rise mt-4 text-xs text-muted" style="--d:10">
+      Jump straight in — the workspace opens instantly with a pre-indexed talk
+      already loaded. Add your own YouTube links or uploads any time.
+    </p>
+  </div>
+
+  <!-- three steps -->
+  <div class="rise mt-20 grid sm:grid-cols-3 gap-5" style="--d:12">
+    <div class="bg-card border border-line rounded-2xl p-5">
+      <div class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 text-xs font-bold flex items-center justify-center display">1</div>
+      <h3 class="display text-lg font-600 mt-3">Add a video</h3>
+      <p class="text-sm text-muted leading-relaxed mt-1">
+        Paste a YouTube link or upload a file. It goes into whichever session you're working in.
+      </p>
+    </div>
+    <div class="bg-card border border-line rounded-2xl p-5">
+      <div class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 text-xs font-bold flex items-center justify-center display">2</div>
+      <h3 class="display text-lg font-600 mt-3">It watches and listens</h3>
+      <p class="text-sm text-muted leading-relaxed mt-1">
+        Frames are sampled and embedded with CLIP; captions are chunked and embedded too. Two ways in.
+      </p>
+    </div>
+    <div class="bg-card border border-line rounded-2xl p-5">
+      <div class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 text-xs font-bold flex items-center justify-center display">3</div>
+      <h3 class="display text-lg font-600 mt-3">Ask, then watch</h3>
+      <p class="text-sm text-muted leading-relaxed mt-1">
+        You get a cited answer. Click any citation and that exact moment plays.
+      </p>
+    </div>
+  </div>
+</main>
+
+<footer class="border-t border-line">
+  <div class="max-w-5xl mx-auto px-6 py-6 text-xs text-muted flex justify-between items-center flex-wrap gap-3">
+    <span>
+      <a class="hover:text-ink font-semibold text-ink" target="_blank" rel="noopener"
+         href="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</a>
+      licensed
+    </span>
+    <span class="flex items-center gap-2">
+      © 2026
+      <a href="https://traversaal.ai" target="_blank" rel="noopener" class="flex items-center">
+        <img src="/ui/assets/traversaal-logo-light.png" alt="Traversaal.ai" class="h-4 w-auto opacity-70 hover:opacity-100 transition">
+      </a>
+    </span>
+  </div>
+</footer>
+
+<script src="/ui/common.js"></script>
+<script>
+  /* Headline word-by-word. The coral word then writes itself in — a nib sweeps
+     left to right uncovering the letters — and signs it off with the underline.
+     .ink is the part that gets uncovered; .nib is the pen tip riding the edge. */
+  const UNDERLINE = `<svg viewBox="0 0 320 14" preserveAspectRatio="none"><path d="M4 9C70 3 154 2 316 6"/></svg>`;
+  const PARTS=[{text:"Find the exact"},{text:"moment",coral:true},{text:"in any video."}];
+  let i=0;
+  $("#heroTitle").innerHTML = PARTS.map(p=>p.text.split(" ").map(w=>{
+    const inner = p.coral
+      ? `<span class="mark text-coral"><span class="ink">${esc(w)}</span><i class="nib" aria-hidden="true"></i>${UNDERLINE}</span>`
+      : esc(w);
+    return `<span class="word" style="--i:${i++}">${inner}</span>`;
+  }).join(" ")).join(" ");
+
+  // No wireNav() here: this page's header has no #navAuth link (the hero button
+  // is the way in). wireNav() is a no-op without one, but calling it would imply
+  // there's something to wire.
+</script>
+</body>
+</html>

@@ -5,23 +5,48 @@
 # Bucket: `fly storage create` provisions Tigris and injects the AWS_* secrets
 # automatically — then just `fly secrets set STORAGE_PROVIDER=flyio`.
 #
-# fly launch --no-deploy --copy-config
+# Deploy is token-only (no browser login) — $env:FLY_API_TOKEN from .env's
+# FLY_IO_TOKEN, then:
+# fly apps create <your-app> --org personal      # name must match `app =` below
 # Get-Content .env | Where-Object { $_ -match '^[A-Z_]+=.+' -and $_ -notmatch '^FLY_' } | fly secrets import
 # fly deploy --ha=false
 # fly scale count worker=2        # more ingest throughput, anytime
+# Full walkthrough: deployment_docs/fly.md
 
+# CHANGE THIS. Fly app names are globally unique, so 'momentsearch' is taken —
+# use your own (e.g. momentsearch-<you>) and create the app under that name.
+# This is the ONLY place the name appears; everything else derives from it.
 app = 'momentsearch'
 primary_region = 'iad'
 
+# Builds the FAT app image (Dockerfile, WITH_TORCH=true): api + worker + clip all
+# run from it and the release_command seed embeds in-process. This is the default
+# all-on-Fly (CPU) deploy — unchanged, and what everything below assumes.
+#
+# SLIM / GPU split: Fly has NO GPUs (deprecated Jul 31 2026), so a GPU CLIP runs
+# on an EXTERNAL host (Modal / RunPod / a GPU VM), built from Dockerfile.clip.
+# Then deploy just api + worker here, built slim, pointed at that host:
+#   fly deploy -c fly.slim.toml    # api + worker, slim, EMBED_SERVICE_URL -> external clip
+# This fly.toml stays the DEFAULT fat all-in-one (CPU). See README "Split / GPU deployment".
 [build]
+  [build.args]
+    WITH_TORCH = "true"
 
 [deploy]
-  # Startup gate: index the four sample talks BEFORE the new version goes live —
+  # Startup gate: index the sample talk BEFORE the new version goes live —
   # if it can't, the deploy aborts and the old version keeps serving, so users
   # never hit a half-indexed app. Runs in a temporary machine where the clip
-  # service isn't up yet, so CLIP_SERVICE_URL= forces in-process embedding.
+  # service isn't up yet, so EMBED_SERVICE_URL=none forces in-process embedding.
+  # (An EMPTY value can't do this: Fly drops empty env vars, so config.py reads it
+  # as unset, falls back to the derived clip.<app>.internal address, and the seed
+  # polls a machine that isn't up for the full timeout — a ~10-min hang. `none` is
+  # the explicit off-switch, handled in src/config.py.)
   # Idempotent + durable (Qdrant Cloud): real work happens only on first deploy.
-  release_command = "sh -c 'CLIP_SERVICE_URL= python -m src.seed'"
+  release_command = "sh -c 'EMBED_SERVICE_URL=none python -m src.seed'"
+  # Headroom for a genuine first-deploy index (1 talk embedded in-process). A
+  # stuck-but-complete sample is adopted, not re-ingested (src/seeding.py), so
+  # this only bites on a truly-fresh Qdrant.
+  release_command_timeout = "12m"
 
 [processes]
   api = 'uvicorn src.app:app --host 0.0.0.0 --port 8000'
@@ -30,11 +55,13 @@ primary_region = 'iad'
   # CLIP_SERVICE_URL) is IPv6-only; 0.0.0.0 would be unreachable internally.
   clip = 'uvicorn src.clip_service:app --host :: --port 8001'
 
-[env]
-  # Fly private networking: <process>.process.<app>.internal resolves to the
-  # clip machine. api + worker send embed batches there (one warm model);
-  # clip_service itself ignores this and always runs the model locally.
-  CLIP_SERVICE_URL = 'http://clip.process.momentsearch.internal:8001'
+# The clip machine's internal address (Fly private networking:
+# <process>.process.<app>.internal) is DERIVED at runtime from Fly's own
+# FLY_APP_NAME in src/config.py — so renaming this app touches ONLY the `app =`
+# line above, never a hardcoded host here. api + worker send embed batches to
+# that one warm model; the clip process ignores it and runs the model locally.
+# (To pin a different embedder host — e.g. a GPU box — set EMBED_SERVICE_URL as
+# a secret and it wins over the derived address.)
 
 # Infra backstop: if a machine's process ever exits (crash, OOM, a dependency
 # outage that slips past the code's own retry loop), always bring it back —

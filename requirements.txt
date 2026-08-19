@@ -14,8 +14,12 @@ google-cloud-storage>=2.16     # STORAGE_PROVIDER=gcp_native
 # Vector DB
 qdrant-client>=1.12
 
-# Visual embeddings (CLIP) — pulls torch
-sentence-transformers>=2.7
+# Visual embeddings — local CLIP (IMAGE_EMBED_PROVIDER=clip, the default) is the
+# torch stack, kept in requirements-clip.txt so it can be OMITTED. The fat app
+# image and the clip service image install it; a SLIM app image
+# (docker build --build-arg WITH_TORCH=false) skips it and must then reach a
+# remote CLIP via EMBED_SERVICE_URL. pillow + numpy stay here — the app needs
+# them for frame handling and vectors regardless of where embedding runs.
 pillow>=10.0
 numpy>=1.24
 
@@ -26,6 +30,23 @@ fastembed>=0.3
 # bot-detection constantly and old yt-dlp versions stop working first.
 yt-dlp>=2026.7.4
 
-# Bring-your-own multimodal LLM (optional providers; install what you use)
+# Bring-your-own models — install only the SDK your provider needs.
+#
+# openai covers MOST providers, because most speak the OpenAI dialect: OpenAI,
+# OpenRouter, xAI (Grok), Groq, Together, Fireworks, Mistral, NVIDIA NIM, Azure,
+# Gemini's compat endpoint, Ollama, LM Studio, vLLM — plus OpenAI-compatible
+# text embeddings. It's also what the default text-embedding path uses.
 openai>=1.30
-# anthropic>=0.25   # uncomment for LLM_PROVIDER=anthropic
+#
+# google-genai powers BOTH the optional Gemini model providers AND speaker
+# recognition ("who said what" — src/ingest/diarize.py uses Gemini video
+# understanding), so it ships by default. It's still gated at runtime by
+# GEMINI_API_KEY + the per-video checkbox, so it costs nothing unless used.
+google-genai>=1.0     # LLM/IMAGE/TEXT_EMBED_PROVIDER=gemini + diarization
+#
+# Optional, one line per provider that has its own API:
+# anthropic>=0.25     # LLM_PROVIDER=anthropic
+#
+# Jina, Cohere and Voyage need NOTHING installed — those adapters use plain
+# HTTPS from the standard library. Run `python -m src.providers` to see which
+# of these your current .env actually requires.

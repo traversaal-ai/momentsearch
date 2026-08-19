@@ -1,0 +1,39 @@
+# The CLIP service image — the ONE piece you put on a GPU. It loads the model
+# once and serves embeddings over HTTP; api/worker (the slim app image) point
+# EMBED_SERVICE_URL at it. This is the "embedding is a URL" split: scale/relocate
+# embedding without touching the app.
+#
+#   CPU (default, builds anywhere):
+#     docker build -f Dockerfile.clip -t momentsearch-clip .
+#     docker run -p 8001:8001 momentsearch-clip
+#
+#   GPU (NVIDIA host with the container runtime):
+#     docker build -f Dockerfile.clip \
+#       --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121 \
+#       -t momentsearch-clip:gpu .
+#     docker run --gpus all -p 8001:8001 momentsearch-clip:gpu
+#     (the cu121 torch wheel bundles the CUDA runtime — no CUDA base image needed;
+#      the host just needs the NVIDIA driver + nvidia-container-toolkit.)
+#
+# Exposed publicly / across providers? Set EMBED_SERVICE_TOKEN (same value here
+# and on the app) so /embed requires a bearer token, and put it behind HTTPS —
+# the token authenticates but does not encrypt.
+FROM python:3.11-slim
+
+# CPU wheel by default; pass a CUDA index (e.g. .../whl/cu121) for a GPU build.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
+WORKDIR /app
+
+COPY requirements.txt requirements-clip.txt ./
+# The clip service needs the base deps (fastapi/numpy/pillow, and fastembed for
+# the local transcript branch's warmup) plus the local-CLIP torch stack. No
+# ffmpeg/nodejs/yt-dlp and no ui/ — this box only embeds.
+RUN pip install --no-cache-dir -r requirements.txt \
+ && pip install --no-cache-dir torch --index-url ${TORCH_INDEX_URL} \
+ && pip install --no-cache-dir -r requirements-clip.txt
+
+COPY src/ src/
+
+EXPOSE 8001
+CMD ["uvicorn", "src.clip_service:app", "--host", "0.0.0.0", "--port", "8001"]

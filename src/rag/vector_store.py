@@ -26,40 +26,20 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 
 from ..config import (
-    CLIP_DIM,
-    CLIP_MODEL,
+    DEFAULT_USER_ID,
     QDRANT_API_KEY,
-    QDRANT_COLLECTION,
+    IMAGE_COLLECTION,
     QDRANT_HNSW_ON_DISK,
     QDRANT_LOCAL_PATH,
     QDRANT_ON_DISK,
     QDRANT_QUANTIZATION,
     QDRANT_URL,
     TEXT_COLLECTION,
-    TEXT_EMBED_DIM,
 )
+from ..providers.embed import image_dim, text_dim
+from ..samples import SAMPLE_IDS
 
 _client: QdrantClient | None = None
-
-# Dimensions of the stock sentence-transformers CLIP checkpoints — lets the
-# API create the collection at boot without pulling in torch or downloading
-# the model. Unknown/custom models: set CLIP_DIM, or the model gets loaded.
-_KNOWN_DIMS = {
-    "clip-ViT-B-32": 512,
-    "clip-ViT-B-16": 512,
-    "clip-ViT-L-14": 768,
-    "clip-ViT-L-14-336": 768,
-}
-
-
-def _dim() -> int:
-    if CLIP_DIM:
-        return CLIP_DIM
-    if CLIP_MODEL in _KNOWN_DIMS:
-        return _KNOWN_DIMS[CLIP_MODEL]
-    from .embeddings import embedding_dim  # last resort — loads the model
-
-    return embedding_dim()
 
 
 def client() -> QdrantClient:
@@ -78,19 +58,74 @@ def point_id(video_id: str, frame_idx: int) -> str:
 
 
 def _user_filter(user_id: str, video_id: str | None = None,
-                 video_ids: list[str] | None = None) -> qm.Filter:
-    must: list[qm.FieldCondition] = [
-        qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id))]
-    if video_id:  # single-video scope (kept for /transcript-style calls)
-        must.append(qm.FieldCondition(key="video_id", match=qm.MatchValue(value=video_id)))
-    elif video_ids:  # multi-select scope — query only the chosen videos
-        must.append(qm.FieldCondition(key="video_id", match=qm.MatchAny(any=video_ids)))
-    return qm.Filter(must=must)
+                 video_ids: list[str] | None = None,
+                 include_samples: bool = False) -> qm.Filter:
+    """Tenant scope for a search/delete, optionally widened to the shared samples.
+
+    include_samples yields `(mine) OR (the sample corpus)` — exactly the sample
+    corpus owned by the default tenant, never anything else that tenant
+    owns. Written as two nested must-groups under `should` so the sample branch
+    can't be satisfied by a user_id match alone: guessing another workspace's
+    video id still matches nothing.
+    """
+    def scope() -> list[qm.FieldCondition]:
+        if video_id:  # single-video scope (kept for /transcript-style calls)
+            return [qm.FieldCondition(key="video_id", match=qm.MatchValue(value=video_id))]
+        if video_ids:  # multi-select scope — query only the chosen videos
+            return [qm.FieldCondition(key="video_id", match=qm.MatchAny(any=video_ids))]
+        return []
+
+    mine = [qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id))] + scope()
+    # The default tenant OWNS the samples, so its plain filter already covers them.
+    if not include_samples or user_id == DEFAULT_USER_ID:
+        return qm.Filter(must=mine)
+
+    shared = sorted(SAMPLE_IDS)
+    if video_id:                       # scoped to one video: is it a sample?
+        shared = [video_id] if video_id in SAMPLE_IDS else []
+    elif video_ids:                    # scoped to a set: keep the samples in it
+        chosen = set(video_ids)
+        shared = [v for v in shared if v in chosen]
+    if not shared:                     # nothing shared in scope — plain tenant filter
+        return qm.Filter(must=mine)
+    return qm.Filter(should=[
+        qm.Filter(must=mine),
+        qm.Filter(must=[
+            qm.FieldCondition(key="user_id", match=qm.MatchValue(value=DEFAULT_USER_ID)),
+            qm.FieldCondition(key="video_id", match=qm.MatchAny(any=shared)),
+        ]),
+    ])
+
+
+def _existing_dim(collection: str) -> int | None:
+    """Vector size of an existing collection, or None if it can't be read."""
+    try:
+        params = client().get_collection(collection).config.params.vectors
+        return int(getattr(params, "size", 0)) or None
+    except Exception:
+        return None
 
 
 def _ensure(collection: str, dim: int) -> None:
-    """Create a collection (low-RAM profile) + tenant/video payload indexes."""
+    """Create a collection (low-RAM profile) + tenant/video payload indexes.
+
+    If the collection already exists with a DIFFERENT vector size, stop. That
+    only happens when someone switched embedding provider or model over an
+    existing index, and the two failure modes are both bad: Qdrant rejects the
+    upsert mid-ingest, or — worse, if the sizes happen to match — search
+    silently compares vectors from two unrelated spaces and returns nonsense.
+    """
     c = client()
+    if c.collection_exists(collection):
+        found = _existing_dim(collection)
+        if found and found != dim:
+            raise RuntimeError(
+                f"Qdrant collection '{collection}' holds {found}-dim vectors but "
+                f"the configured embedder produces {dim}. Embeddings must match "
+                f"between indexing and querying. Either restore the previous "
+                f"provider/model, or re-index this branch: delete the collection "
+                f"and re-ingest (python -m src.providers shows what's configured)."
+            )
     if not c.collection_exists(collection):
         c.create_collection(
             collection_name=collection,
@@ -127,13 +162,13 @@ def _ensure(collection: str, dim: int) -> None:
 
 
 def ensure_collection() -> None:
-    """Visual (CLIP frame) collection."""
-    _ensure(QDRANT_COLLECTION, _dim())
+    """Visual (frame) collection — dimension comes from IMAGE_EMBED_PROVIDER."""
+    _ensure(IMAGE_COLLECTION, image_dim())
 
 
 def ensure_text_collection() -> None:
-    """Transcript (bge text) collection — the second branch."""
-    _ensure(TEXT_COLLECTION, TEXT_EMBED_DIM)
+    """Transcript collection — dimension comes from TEXT_EMBED_PROVIDER."""
+    _ensure(TEXT_COLLECTION, text_dim())
 
 
 def upsert_frames(user_id: str, video_id: str, ids: Iterable[int],
@@ -143,18 +178,19 @@ def upsert_frames(user_id: str, video_id: str, ids: Iterable[int],
         for idx, vec, payload in zip(ids, vectors, payloads)
     ]
     if points:
-        client().upsert(collection_name=QDRANT_COLLECTION, points=points, wait=True)
+        client().upsert(collection_name=IMAGE_COLLECTION, points=points, wait=True)
 
 
 def search(vector: np.ndarray, user_id: str, *, top_k: int,
            video_id: str | None = None,
-           video_ids: list[str] | None = None) -> list[dict[str, Any]]:
+           video_ids: list[str] | None = None,
+           include_samples: bool = False) -> list[dict[str, Any]]:
     try:
         hits = client().query_points(
-            collection_name=QDRANT_COLLECTION,
+            collection_name=IMAGE_COLLECTION,
             query=vector.tolist(),
             limit=top_k,
-            query_filter=_user_filter(user_id, video_id, video_ids),
+            query_filter=_user_filter(user_id, video_id, video_ids, include_samples),
             with_payload=True,
             search_params=qm.SearchParams(
                 # Quantized search is lossy; rescore re-reads the full-precision
@@ -189,13 +225,14 @@ def upsert_chunks(user_id: str, video_id: str, vectors: np.ndarray,
 
 def search_text(vector: np.ndarray, user_id: str, *, top_k: int,
                 video_id: str | None = None,
-                video_ids: list[str] | None = None) -> list[dict[str, Any]]:
+                video_ids: list[str] | None = None,
+                include_samples: bool = False) -> list[dict[str, Any]]:
     try:
         hits = client().query_points(
             collection_name=TEXT_COLLECTION,
             query=vector.tolist(),
             limit=top_k,
-            query_filter=_user_filter(user_id, video_id, video_ids),
+            query_filter=_user_filter(user_id, video_id, video_ids, include_samples),
             with_payload=True,
             search_params=qm.SearchParams(
                 quantization=qm.QuantizationSearchParams(rescore=True)
@@ -209,10 +246,60 @@ def search_text(vector: np.ndarray, user_id: str, *, top_k: int,
     return [{"score": float(h.score), **(h.payload or {})} for h in hits]
 
 
+def fetch_chunks(user_id: str, video_id: str) -> list[dict[str, Any]]:
+    """Every transcript chunk for a video, sorted by time — `[{text, t_start,
+    t_end}]`. Used to backfill the durable GCP transcript copy for videos indexed
+    before transcript-to-storage existed (no YouTube re-fetch needed)."""
+    try:
+        points, _ = client().scroll(
+            collection_name=TEXT_COLLECTION,
+            scroll_filter=qm.Filter(must=[
+                qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id)),
+                qm.FieldCondition(key="video_id", match=qm.MatchValue(value=video_id)),
+            ]),
+            with_payload=True, with_vectors=False, limit=10000,
+        )
+    except Exception:
+        return []
+    out = [{"text": p.payload.get("text", ""),
+            "t_start": float(p.payload.get("t_start", 0.0)),
+            "t_end": float(p.payload.get("t_end", 0.0)),
+            # who said it (diarization), when present — lets the synced transcript
+            # panel show speakers and keeps it in the durable transcript copy.
+            **({"speaker": p.payload["speaker"]} if p.payload.get("speaker") else {})}
+           for p in points if p.payload and p.payload.get("text")]
+    out.sort(key=lambda c: c["t_start"])
+    return out
+
+
+def frame_times(user_id: str, video_id: str) -> list[tuple[int, int]]:
+    """[(idx, ms)] for every stored frame of a video — so a text-only ('said')
+    moment can borrow the picture nearest its timestamp instead of showing an
+    empty box (uploads have no YouTube thumbnail to fall back on). Empty if the
+    video has no frames."""
+    try:
+        points, _ = client().scroll(
+            collection_name=IMAGE_COLLECTION,
+            scroll_filter=qm.Filter(must=[
+                qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id)),
+                qm.FieldCondition(key="video_id", match=qm.MatchValue(value=video_id)),
+            ]),
+            with_payload=["idx", "ms"], with_vectors=False, limit=10000,
+        )
+    except Exception:
+        return []
+    out = []
+    for p in points:
+        pay = p.payload or {}
+        if "idx" in pay:
+            out.append((int(pay["idx"]), int(pay.get("ms", 0))))
+    return out
+
+
 def delete_video(user_id: str, video_id: str) -> None:
     """Purge a video from BOTH branches (frames + transcript)."""
     sel = qm.FilterSelector(filter=_user_filter(user_id, video_id))
-    for coll in (QDRANT_COLLECTION, TEXT_COLLECTION):
+    for coll in (IMAGE_COLLECTION, TEXT_COLLECTION):
         try:
             client().delete(collection_name=coll, points_selector=sel, wait=True)
         except Exception:
@@ -221,6 +308,6 @@ def delete_video(user_id: str, video_id: str) -> None:
 
 def collection_ready() -> bool:
     try:
-        return client().collection_exists(QDRANT_COLLECTION)
+        return client().collection_exists(IMAGE_COLLECTION)
     except Exception:
         return False

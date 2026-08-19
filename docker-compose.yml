@@ -4,48 +4,135 @@
 #   docker compose up --build
 #   API + UI:        http://localhost:8000
 #   Run/queue view:  https://app.prefect.cloud -> Runs
-# Vector store is Qdrant Cloud via QDRANT_URL in .env. To run a local Qdrant
-# instead, add a qdrant service here and blank QDRANT_URL.
+# Vector store defaults to Qdrant Cloud via QDRANT_URL in .env. To run Qdrant
+# LOCALLY instead, you touch ONLY .env — nothing to uncomment, no flags. Add:
+#   COMPOSE_PROFILES=local-qdrant     # compose reads this and auto-starts qdrant
+#   QDRANT_URL=http://qdrant:6333     (leave QDRANT_API_KEY blank)
+# Then `docker compose up` brings Qdrant up on its own. Cloud users set neither,
+# so the qdrant service never runs for them.
+# The manifest DB works the same way — add local-postgres to COMPOSE_PROFILES and
+# point DATABASE_URL at the bundled service (see the `postgres` service below).
+# Storage is already local when STORAGE_PROVIDER=local (files under ./data) —
+# no service needed. Together that's the whole stack local except the queue
+# (Prefect). See README "Run storage and Qdrant locally".
+#
+# Image variants: everything builds the FAT app image by default (WITH_TORCH=true).
+# api + worker take the arg, so `WITH_TORCH=false docker compose build` makes them
+# SLIM (no local model) — they then embed only via the `clip` service, which stays
+# fat (torch) regardless. Production/GPU builds the clip service from Dockerfile.clip
+# (see README "Split / GPU deployment"); locally the fat image serves clip fine.
 services:
+  # Local vector store — starts ONLY when .env has COMPOSE_PROFILES=local-qdrant
+  # (a compose profile). No uncommenting, no CLI flag: describe it in .env and
+  # `docker compose up` brings it up automatically. Data persists under
+  # ./data/qdrant, shared by api + worker + seed (unlike embedded single-process).
+  # Boots in ~1-2s, before the app makes its first Qdrant call, so no depends_on
+  # is needed. Cloud users don't set the profile, so this never runs for them.
+  qdrant:
+    image: qdrant/qdrant:latest
+    profiles: ["local-qdrant"]
+    ports:
+      - "6333:6333"          # REST/gRPC — also opens the dashboard
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    restart: unless-stopped
+
+  # Local manifest DB — starts ONLY when .env has local-postgres in
+  # COMPOSE_PROFILES, same deal as qdrant above: describe it in .env, `docker
+  # compose up` does the rest. Pair it with
+  #   DATABASE_URL=postgresql://ms:ms@postgres:5432/ms
+  # (no sslmode — this one is plaintext on the compose network). Cloud users set
+  # neither, so the service is never created for them.
+  #
+  # Unlike qdrant this one IS gated on a healthcheck: first boot runs initdb,
+  # which takes a few seconds, and seed/api/worker connect immediately on start —
+  # without the gate they'd race it and crash. The `required: false` on each
+  # depends_on entry below is what keeps that gate optional: it means "wait for
+  # postgres IF it's in the project". A plain depends_on is a hard reference, so
+  # with the profile off compose would reject the whole project with
+  # `service "api" depends on undefined service "postgres"` — breaking every
+  # cloud user. Data lives in a named volume (not a ./data bind mount, which
+  # fails initdb on Windows over ownership).
+  postgres:
+    image: postgres:16
+    profiles: ["local-postgres"]
+    environment:
+      POSTGRES_USER: ms
+      POSTGRES_PASSWORD: ms
+      POSTGRES_DB: ms
+    ports:
+      - "5433:5432"          # host-side psql/TablePlus; 5433 dodges a native 5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ms -d ms"]
+      interval: 2s
+      timeout: 3s
+      retries: 30            # ~60s for the first initdb
+    restart: unless-stopped
+
   # The inference service: ONE warm CLIP model behind a URL. api + worker send
   # batches here instead of each flow run paying a fresh ~15-30s model load.
   # Scaling embedding = scaling THIS service (CPU here; same container on a
   # GPU machine later — only CLIP_SERVICE_URL changes).
   clip:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_TORCH: "true"        # the clip service always needs the local model
     command: uvicorn src.clip_service:app --host 0.0.0.0 --port 8001
     env_file: .env
     volumes:
+      - ./src:/app/src            # live code — restart clip to pick up changes
+      - ./.env:/app/.env:ro       # so load_dotenv() works in any subprocess (see config.py)
       - hf_cache:/root/.cache     # model weights cached across restarts
     restart: unless-stopped
 
-  # STARTUP GATE — indexes the four sample talks and exits. api + worker wait
+  # STARTUP GATE — indexes the sample talk and exits. api + worker wait
   # for it to finish (service_completed_successfully), so the UI is NEVER
   # reachable with a half-indexed corpus: when localhost:8000 answers, the
   # samples are ready. Idempotent + durable (Qdrant Cloud) — after the first
   # successful run this exits in seconds. First run takes a few minutes
-  # (model download + 4 videos); watch its logs: docker compose logs -f seed
+  # (model download + 1 video); watch its logs: docker compose logs -f seed
   seed:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_TORCH: "true"        # kept fat so it can seed even if clip is down
     command: python -m src.seed
     env_file: .env
     environment:
       CLIP_SERVICE_URL: ${CLIP_SERVICE_URL:-http://clip:8001}
     volumes:
+      - ./src:/app/src            # live code — re-runs current seed logic on each `up`
+      - ./.env:/app/.env:ro       # so load_dotenv() works in any subprocess (see config.py)
       - ./data:/app/data
+      - ./secrets:/app/secrets:ro # YouTube cookies etc. — kept out of ./data (storage tree)
       - hf_cache:/root/.cache
     depends_on:
-      - clip
+      clip:
+        condition: service_started
+      postgres:                       # local-postgres profile only; see above
+        condition: service_healthy
+        required: false
     restart: "no"
 
   api:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_TORCH: "${WITH_TORCH:-true}"   # set WITH_TORCH=false to build slim
+    # --reload: edits to src/ hot-reload the API; edits to ui/ show on refresh.
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     env_file: .env
     environment:
       CLIP_SERVICE_URL: ${CLIP_SERVICE_URL:-http://clip:8001}
     volumes:
+      - ./src:/app/src            # live code — no rebuild for Python changes
+      - ./ui:/app/ui              # live UI — edit the HTML/JS/CSS in ui/, just refresh
+      - ./.env:/app/.env:ro       # so load_dotenv() works in any subprocess (see config.py)
       - ./data:/app/data          # STORAGE_PROVIDER=local only (dev)
       - hf_cache:/root/.cache
     depends_on:
@@ -53,10 +140,16 @@ services:
         condition: service_started
       seed:
         condition: service_completed_successfully   # UI up only after samples ready
+      postgres:                       # local-postgres profile only; see above
+        condition: service_healthy
+        required: false
     restart: unless-stopped
 
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_TORCH: "${WITH_TORCH:-true}"   # set WITH_TORCH=false to build slim
     command: python -m src.worker
     env_file: .env
     environment:
@@ -66,16 +159,23 @@ services:
       # (download + ffmpeg only) — raise this without adding RAM for models.
       WORKER_CONCURRENCY: 2
     volumes:
+      - ./src:/app/src            # live code — restart the worker to pick up changes
+      - ./.env:/app/.env:ro       # so load_dotenv() works in the Prefect flow subprocess (see config.py)
       - ./data:/app/data
+      - ./secrets:/app/secrets:ro # YouTube cookies etc. — kept out of ./data (storage tree)
       - hf_cache:/root/.cache
     depends_on:
       clip:
         condition: service_started
       seed:
         condition: service_completed_successfully
+      postgres:                       # local-postgres profile only; see above
+        condition: service_healthy
+        required: false
     restart: unless-stopped
     # Need more throughput? Replicas multiply it (all share the one clip model):
     # docker compose up -d --scale worker=3   (-> 6 videos at once)
 
 volumes:
   hf_cache:
+  pgdata:          # local-postgres only; unused (and uncreated) on a cloud DATABASE_URL

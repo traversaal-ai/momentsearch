@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Demo · MomentSearch</title>
+<link rel="icon" href="/ui/assets/momentsearch-mark.svg">
+<link rel="apple-touch-icon" href="/ui/assets/traversaal-mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    colors: { paper:"#FBF7F0", paper2:"#F3ECE0", card:"#FFFFFF", ink:"#1E1B16",
+              muted:"#6B6357", line:"#E7DECF", coral:"#FF5A3C", coral2:"#E8472B" },
+    fontFamily: { serif:['Fraunces','Georgia','serif'], sans:['Inter','system-ui','sans-serif'] },
+  }}}
+</script>
+<link rel="stylesheet" href="/ui/app.css">
+<!--MS_MODE-->
+</head>
+<body class="min-h-screen bg-paper text-ink">
+
+<div class="grain" aria-hidden="true"></div>
+
+<header class="border-b border-line">
+  <div class="max-w-5xl mx-auto px-6 pt-6 pb-2 flex items-center gap-3">
+    <a href="/" class="flex items-center gap-1 text-sm text-muted hover:text-ink shrink-0" title="Back to home">
+      <span aria-hidden="true">←</span><span class="hidden sm:inline">Home</span>
+    </a>
+    <span class="w-px h-5 bg-line shrink-0" aria-hidden="true"></span>
+    <!-- Same wordmark as the landing page, one line (this header is dense, so no
+         "Powered by" under it — the footer carries Traversaal here). -->
+    <a href="/" id="brand" class="brandMain shrink-0" aria-label="MomentSearch home">
+      <span class="brandName text-[17px]">M<svg class="brandO" viewBox="4 4 56 56" aria-hidden="true">
+        <circle cx="32" cy="32" r="23" fill="none" stroke="currentColor" stroke-width="7"/>
+        <path d="M27 21v22l19-11Z" fill="currentColor"/>
+        <circle cx="49" cy="47" r="6" fill="#FF5A3C" stroke="#FBF7F0" stroke-width="2"/>
+      </svg>ment<span class="brandSearch">Search</span></span>
+    </a>
+    <span class="text-xs px-2 py-0.5 rounded-full border border-line text-muted">demo</span>
+    <span id="llmBadge" class="ml-auto text-xs px-3 py-1 rounded-full border border-line text-muted">checking…</span>
+    <a id="navAuth" href="/app" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-ink text-white hover:bg-black transition">Workspace →</a>
+  </div>
+
+  <!-- HERO — copy + ask box on the left, the video itself on the right. The
+       frame holds the video's own YouTube still at its native 16:9 (demo.js
+       fills it from /api/videos, so it follows whatever the sample corpus
+       actually is) and the caption underneath is the video's name. -->
+  <div class="max-w-5xl mx-auto px-6 pt-8 pb-10 grid lg:grid-cols-[1fr_auto] gap-8 lg:gap-12 items-center">
+    <div>
+      <div id="heroBadge" class="rise inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-5" style="--d:0">
+        ● Pre-indexed sample · frame-by-frame and word-by-word
+      </div>
+      <!-- min-h reserves the two lines demo.js writes once the sample is named,
+           so the hero doesn't jump when /api/videos answers. -->
+      <h1 id="heroTitle" class="display text-4xl sm:text-5xl font-bold leading-[1.05] tracking-tight min-h-[3.2em]"></h1>
+      <p class="rise mt-4 text-lg text-muted max-w-xl leading-relaxed" style="--d:6">
+        A cited answer, drawn from what's <b class="text-ink">shown on screen</b> and what's
+        <b class="text-ink">said out loud</b>. Click any citation to pop up the video at
+        that exact second, with a synced transcript.
+      </p>
+
+      <div class="rise mt-7 flex flex-col sm:flex-row gap-3 max-w-xl items-stretch" style="--d:8">
+        <div class="relative flex-1">
+          <textarea id="q" rows="2" aria-label="Ask a question about the video"
+            class="relative z-10 w-full bg-white border border-line rounded-xl px-4 py-3 text-[15px] leading-relaxed outline-none focus:border-coral focus:ring-4 focus:ring-coral/15 resize-none overflow-hidden"></textarea>
+          <!-- The typewriter placeholder is a real element under the textarea, so
+               it can carry a blinking caret. It must match the textarea's box
+               EXACTLY or the two texts sit a pixel apart — hence the transparent
+               border standing in for the textarea's own. -->
+          <div id="ghost" class="ghost border border-transparent px-4 py-3 text-[15px] leading-relaxed">Ask a question about the video…</div>
+        </div>
+        <button id="go" class="sm:self-start bg-coral hover:bg-coral2 text-white font-semibold rounded-xl px-6 py-3.5 transition whitespace-nowrap">Ask →</button>
+      </div>
+
+      <div id="examples" class="rise mt-4 flex flex-wrap gap-2" style="--d:10"></div>
+    </div>
+
+    <figure class="mx-auto lg:mx-0 w-fit text-center">
+      <div class="relative">
+        <div class="absolute -inset-2 rounded-3xl bg-coral/10 -z-10"></div>
+        <!-- The still is a play button: this is a video, so the first thing you
+             can do with it is watch it (demo.js opens the same player modal the
+             citations use, from 0:00, transcript beside it).
+
+             The box is 16:9, same as the still, so the frame is shown whole
+             instead of being cropped into a circle — a square crop of a
+             widescreen frame reads as a meaningless zoom. maxres is the clean
+             frame; hq is the fallback for videos without one (demo.js swaps it
+             on error) and object-cover trims its baked-in pillarbox. -->
+        <button id="heroPlay" type="button" title="Play the video"
+          class="group relative block rounded-2xl overflow-hidden border border-line bg-paper2 shadow-[0_24px_60px_-24px_rgba(30,27,22,.45)] focus:outline-none focus-visible:ring-4 focus-visible:ring-coral/30 disabled:cursor-default">
+          <img id="heroThumb" alt="" src="https://img.youtube.com/vi/LPZh9BOjkQs/maxresdefault.jpg"
+            class="block w-[300px] sm:w-[360px] lg:w-[400px] aspect-video object-cover transition duration-500 group-hover:scale-[1.04]">
+          <!-- The badge is always drawn, not revealed on hover: on a touch screen
+               there is no hover, and an invisible control is no control. -->
+          <span class="absolute inset-0 bg-ink/10 group-hover:bg-ink/25 transition" aria-hidden="true"></span>
+          <span class="absolute inset-0 flex items-center justify-center" aria-hidden="true">
+            <span id="heroPlayBadge" class="w-14 h-14 rounded-full bg-white/95 text-coral2 shadow-lg flex items-center justify-center text-lg pl-0.5 transition group-hover:bg-coral group-hover:text-white group-hover:scale-110">▶</span>
+          </span>
+        </button>
+      </div>
+      <figcaption class="mt-4 text-sm max-w-[400px] mx-auto">
+        <span id="heroName" class="font-semibold text-ink block leading-snug">Loading the sample…</span>
+        <span id="heroSub" class="text-muted"></span>
+        <!-- Provenance and credit: this app indexes public video, it doesn't host
+             or own it. demo.js fills in the creator's name (linked to their
+             channel) and the original video. -->
+        <p id="heroSource" class="hidden mt-1.5 text-[12px] text-muted leading-relaxed"></p>
+      </figcaption>
+    </figure>
+  </div>
+</header>
+
+<main class="max-w-5xl mx-auto px-6 py-8">
+
+  <!-- Trace: the pipeline as pills, lit as each stage actually begins. The
+       server emits these at real boundaries (src/rag/search.py::on_stage), so a
+       slow stage visibly sits there instead of a bar animating through it. -->
+  <div id="trace-widget" class="hidden mb-8 bg-card border border-line rounded-2xl">
+    <button id="trace-toggle" class="w-full flex items-center justify-between px-4 py-3 text-left">
+      <span class="text-sm font-semibold flex items-center gap-2"><span class="text-coral2">⚙</span> How this answer was built</span>
+      <span id="trace-chev" class="text-muted text-xs">Show details ▸</span>
+    </button>
+    <div class="px-4 pb-3"><div id="trace" class="flex flex-wrap items-center gap-2"></div></div>
+    <div id="trace-detail" class="hidden border-t border-line px-4 py-4 space-y-4"></div>
+  </div>
+
+  <div id="results" class="hidden"><article id="article"></article></div>
+
+  <section id="sources-wrap" class="hidden mt-12">
+    <h3 class="display text-2xl font-600 mb-1">Moments</h3>
+    <p class="text-muted text-sm mb-5">Every cited moment — click to play it.</p>
+    <div id="sources" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+  </section>
+
+  <div class="mt-6 pt-6 border-t border-line text-sm text-muted">
+    <b class="text-ink">Want your own videos?</b>
+    <a href="/app" class="text-coral2 font-semibold hover:text-coral">Open the workspace</a>
+    — upload your own (or paste YouTube links) and ask. No sign-in needed. Nothing on this page is saved.
+  </div>
+</main>
+
+<!-- PLAYER MODAL — the ids here are the contract with openMoment() in
+     common.js; renaming one silently breaks playback on every page. -->
+<div id="modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+  <div class="bg-card w-full max-w-5xl rounded-2xl overflow-hidden shadow-2xl max-h-[92vh] flex flex-col fade-in">
+    <div class="flex items-start justify-between gap-3 px-4 py-2.5 border-b border-line">
+      <div class="min-w-0">
+        <div id="mTitle" class="text-sm font-semibold leading-snug truncate">Moment</div>
+        <div id="mMeta" class="text-xs text-muted mt-0.5"></div>
+      </div>
+      <button id="mClose" class="shrink-0 w-8 h-8 rounded-full hover:bg-paper2 flex items-center justify-center text-muted text-lg">✕</button>
+    </div>
+    <div class="flex flex-col md:flex-row min-h-0 flex-1 overflow-hidden">
+      <div class="md:flex-1 flex flex-col min-w-0">
+        <div id="playerBox" class="bg-black aspect-video shrink-0"></div>
+        <div class="flex items-center gap-3 px-4 py-3 border-t border-line">
+          <img id="mFrame" class="w-24 aspect-video object-cover rounded-lg border border-line bg-paper2" alt="matched frame">
+          <div class="text-xs text-muted">
+            <div id="mFrameLabel" class="font-semibold text-ink mb-0.5">Matched frame</div>
+            <span id="mFrameDesc"></span>
+            <a id="mOut" href="#" target="_blank" class="text-coral2 font-semibold hover:text-coral block mt-1">Open on source ↗</a>
+          </div>
+        </div>
+      </div>
+      <!-- Synced transcript: active line follows playback, click a line to jump -->
+      <div id="transcriptWrap" class="md:w-80 shrink-0 border-t md:border-t-0 md:border-l border-line flex flex-col min-h-0">
+        <div class="px-4 py-2 text-[11px] uppercase tracking-wider text-muted font-semibold border-b border-line shrink-0">Transcript · click a line to jump</div>
+        <div id="transcriptPanel" class="overflow-y-auto p-2 grow min-h-[120px] max-h-[40vh] md:max-h-none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="border-t border-line">
+  <div class="max-w-5xl mx-auto px-6 py-6 text-xs text-muted flex justify-between items-center flex-wrap gap-3">
+    <span>
+      <a class="hover:text-ink font-semibold text-ink" target="_blank" rel="noopener"
+         href="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</a>
+      licensed
+    </span>
+    <span class="flex items-center gap-2">
+      © 2026
+      <a href="https://traversaal.ai" target="_blank" rel="noopener" class="flex items-center">
+        <img src="/ui/assets/traversaal-logo-light.png" alt="Traversaal.ai" class="h-4 w-auto opacity-70 hover:opacity-100 transition">
+      </a>
+    </span>
+  </div>
+</footer>
+
+<script src="/ui/common.js"></script>
+<script src="/ui/demo.js"></script>
+</body>
+</html>

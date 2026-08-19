@@ -1,0 +1,14 @@
+# Local CLIP visual embedder (IMAGE_EMBED_PROVIDER=clip, the default) — the
+# torch stack, kept separate so it can be omitted.
+#
+# Installed by:
+#   - the FAT app image        (Dockerfile,      WITH_TORCH=true, the default)
+#   - the clip service image   (Dockerfile.clip)
+# Skipped by:
+#   - the SLIM app image       (Dockerfile,      WITH_TORCH=false) — that image
+#     has no local model and MUST reach a remote CLIP via EMBED_SERVICE_URL.
+#
+# torch itself is installed separately by the Dockerfiles (a CPU or CUDA wheel
+# index), because the wheel source differs by target and must be pinned before
+# sentence-transformers pulls a default one.
+sentence-transformers>=2.7

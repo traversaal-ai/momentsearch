@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Workspace · MomentSearch</title>
+<link rel="icon" href="/ui/assets/momentsearch-mark.svg">
+<link rel="apple-touch-icon" href="/ui/assets/traversaal-mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    colors: { paper:"#FBF7F0", paper2:"#F3ECE0", card:"#FFFFFF", ink:"#1E1B16",
+              muted:"#6B6357", line:"#E7DECF", coral:"#FF5A3C", coral2:"#E8472B" },
+    fontFamily: { serif:['Fraunces','Georgia','serif'], sans:['Inter','system-ui','sans-serif'] },
+  }}}
+</script>
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<!-- data-view is DERIVED from your videos (see workspace.js::view):
+       add        nothing indexed and nothing in flight
+       processing something is indexing (or everything failed)
+       ask        at least one video is searchable
+     data-ans says whether an answer is on screen; data-side is the phone drawer. -->
+<body class="h-screen bg-paper text-ink flex flex-col overflow-hidden"
+      data-view="add" data-ans="0" data-side="closed">
+
+<div class="grain" aria-hidden="true"></div>
+
+<!-- HEADER — one workspace, so there is nothing here to switch between. -->
+<header class="border-b border-line shrink-0 z-30">
+  <div class="px-4 sm:px-6 py-3 flex items-center gap-3">
+    <a href="/" class="flex items-center gap-1 text-sm text-muted hover:text-ink shrink-0" title="Back to home">
+      <span aria-hidden="true">←</span><span class="hidden sm:inline">Home</span>
+    </a>
+    <span class="w-px h-5 bg-line shrink-0" aria-hidden="true"></span>
+    <a href="/" class="brandMain shrink-0" aria-label="MomentSearch home">
+      <span class="brandName text-[16px]">M<svg class="brandO" viewBox="4 4 56 56" aria-hidden="true">
+        <circle cx="32" cy="32" r="23" fill="none" stroke="currentColor" stroke-width="7"/>
+        <path d="M27 21v22l19-11Z" fill="currentColor"/>
+        <circle cx="49" cy="47" r="6" fill="#FF5A3C" stroke="#FBF7F0" stroke-width="2"/>
+      </svg>ment<span class="brandSearch">Search</span></span>
+    </a>
+    <span class="text-muted hidden sm:inline" aria-hidden="true">/</span>
+    <span class="display text-[15px] font-600 hidden sm:inline">Workspace</span>
+
+    <!-- Phones have no room for the rail, so it becomes a drawer. -->
+    <button id="sideToggle" class="md:hidden ml-auto text-xs font-semibold border border-line rounded-full px-3 py-1 whitespace-nowrap">
+      <span id="sideCount">Videos</span>
+    </button>
+
+    <span id="llmBadge" class="md:ml-auto text-xs px-3 py-1 rounded-full border border-line text-muted hidden sm:inline">checking…</span>
+
+    <!-- Setup status. Quiet by default: a small gear + colored dot (green = all
+         keys set, amber = a feature off, coral = ingest blocked). Click for the
+         checklist of exactly what to set. The loud part (the bar below the header)
+         only appears for BLOCKING gaps. Hidden until /api/config reports. -->
+    <div id="setupWrap" class="relative shrink-0 hidden">
+      <button id="setupPill" class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border border-line text-muted hover:text-ink hover:border-coral transition"
+              title="Setup status" aria-haspopup="true" aria-expanded="false">
+        <svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M4.6 12H2M22 12h-2.6M6.2 6.2 4.4 4.4M19.6 19.6l-1.8-1.8M17.8 6.2l1.8-1.8M4.4 19.6l1.8-1.8"/>
+        </svg>
+        <span id="setupDot" class="w-2 h-2 rounded-full bg-[#2f9e57]"></span>
+        <span id="setupPillText" class="hidden sm:inline">Setup</span>
+      </button>
+      <div id="setupPop" class="hidden absolute right-0 mt-2 w-72 max-w-[85vw] bg-card border border-line rounded-xl shadow-lg p-3 z-50 text-left"></div>
+    </div>
+
+    <!-- Single-user: this names the account, it doesn't offer to change it. -->
+    <span id="avatar" class="w-7 h-7 rounded-full bg-coral/15 border border-coral/35 text-coral2 text-xs font-bold flex items-center justify-center shrink-0"></span>
+    <span id="whoName" class="text-xs text-muted hidden lg:inline"></span>
+  </div>
+</header>
+
+<!-- Loud setup notice — auto-drops ONLY for blocking gaps (something needed to add
+     or search videos is missing). ✕ clears it for now; it returns on the next load
+     while the gap remains, so a missing key can't be permanently hidden. -->
+<div id="setupBar" class="hidden shrink-0 border-b border-coral/40 bg-coral/8 text-coral2">
+  <div class="px-4 sm:px-6 py-2 flex items-center gap-2 text-[12.5px]">
+    <span aria-hidden="true">⚠</span>
+    <span id="setupBarMsg" class="flex-1 min-w-0 truncate font-500"></span>
+    <button id="setupBarFix" class="font-semibold underline underline-offset-2 hover:no-underline shrink-0">Fix →</button>
+    <button id="setupBarClose" class="opacity-70 hover:opacity-100 shrink-0" title="Dismiss" aria-label="Dismiss">✕</button>
+  </div>
+</div>
+
+<main class="flex-1 flex min-h-0 overflow-hidden">
+
+  <!-- ── SIDEBAR — add on top, videos in the middle, ask at the bottom ─────────
+       This is the whole navigation. Because your videos are permanently on
+       screen, "add / processing / ask" stopped being places to walk between and
+       became just the state of the pane on the right. -->
+  <aside id="side" class="w-full md:w-80 xl:w-[21rem] shrink-0 border-r border-line flex-col min-h-0 bg-paper">
+
+    <!-- ADD. Collapses to its summary row once you have videos, so it doesn't
+         hold prime real estate for something you use rarely after setup. -->
+    <details id="addBox" class="shrink-0 border-b border-line">
+      <summary class="list-none cursor-pointer px-3 py-2.5 flex items-center gap-2 hover:bg-card transition">
+        <span class="w-5 h-5 rounded-md bg-coral text-white flex items-center justify-center text-[13px] leading-none shrink-0">+</span>
+        <span class="text-[13px] font-600">Add videos</span>
+        <span class="chev ml-auto text-[10px] text-muted" aria-hidden="true">▾</span>
+      </summary>
+
+      <div class="px-3 pb-3 space-y-2.5">
+        <div class="flex gap-1.5">
+          <input id="ytUrl" type="text" placeholder="Paste a YouTube URL" autocomplete="off"
+            class="flex-1 min-w-0 bg-white border border-line rounded-lg px-2.5 py-2 text-[12.5px] outline-none focus:border-coral">
+          <button id="ytBtn" class="bg-ink hover:bg-black text-white text-[12.5px] font-semibold rounded-lg px-3 transition shrink-0">Add</button>
+        </div>
+
+        <label id="drop" class="block border-2 border-dashed border-line rounded-xl px-3 py-4 text-center cursor-pointer hover:border-coral hover:bg-coral/[0.03] transition">
+          <input id="upFile" type="file" accept="video/*" class="hidden" multiple>
+          <span class="block text-[12.5px]"><b class="text-ink">Drop videos</b> <span class="text-muted">or click</span></span>
+          <span class="block text-[10.5px] text-muted mt-0.5" id="upLimit"></span>
+        </label>
+
+        <!-- Import from Google Drive. Always shown; without GDRIVE_CLIENT_ID +
+             GDRIVE_API_KEY a click says what's missing instead of opening the
+             picker (workspace.js reads /api/config). Picks in Google's own
+             popup, then the browser hands the bytes to the ordinary upload
+             path — the server sees a normal upload. -->
+        <button id="gdriveBtn" type="button"
+          class="w-full flex items-center justify-center gap-2 bg-white border border-line hover:border-coral rounded-lg px-3 py-2 text-[12.5px] transition">
+          <svg viewBox="0 0 87.3 78" class="w-3.5 h-3.5 shrink-0" aria-hidden="true">
+            <path fill="#0066da" d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z"/>
+            <path fill="#00ac47" d="M43.65 25L29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 00-1.2 4.5h27.5z"/>
+            <path fill="#ea4335" d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z"/>
+            <path fill="#00832d" d="M43.65 25L57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z"/>
+            <path fill="#2684fc" d="M59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z"/>
+            <path fill="#ffba00" d="M73.4 26.5l-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z"/>
+          </svg>
+          <span id="gdriveLabel">Import from Google Drive</span>
+        </button>
+
+        <!-- Speaker recognition ("who said what") — applies to videos you add
+             next. Gemini-only: workspace.js disables it and shows the hint when
+             GEMINI_API_KEY isn't set, and the server rejects it without a key. -->
+        <label id="diarizeRow" class="flex items-start gap-2 text-[12px] bg-card border border-line rounded-lg p-2.5 cursor-pointer">
+          <input id="diarizeChk" type="checkbox" class="mt-0.5 accent-coral shrink-0">
+          <span class="min-w-0">
+            <span class="font-600 text-ink">Speaker recognition</span>
+            <span class="text-muted">— label who said what. Slower to index.</span>
+            <span id="diarizeHint" class="block text-[10.5px] text-coral2 mt-0.5 hidden">Needs <code>GEMINI_API_KEY</code>.</span>
+          </span>
+        </label>
+
+        <div id="upList" class="space-y-1.5"></div>
+        <div id="ingestStatus" class="text-[11.5px] text-muted min-h-[15px]"></div>
+      </div>
+    </details>
+
+    <!-- VIDEOS — the scope control and the status board in one list. -->
+    <div class="px-3 pt-2.5 pb-1.5 shrink-0 flex items-baseline gap-2">
+      <span class="text-[11px] uppercase tracking-wider text-muted font-semibold">Videos</span>
+      <span id="vidCount" class="text-[11px] text-muted"></span>
+      <span class="ml-auto text-[11px] flex gap-1.5">
+        <button id="selAll" class="text-coral2 hover:text-coral font-semibold">All</button>
+        <span class="text-line">|</span>
+        <button id="selNone" class="text-muted hover:text-ink">None</button>
+      </span>
+    </div>
+    <div id="vidList" class="flex-1 overflow-y-auto px-2 pb-2 space-y-1.5"></div>
+
+    <!-- Not a button: the ask box is already on screen, so a "go and ask" control
+         was a step that led nowhere. This just says what the rail is for. -->
+    <div class="p-3 border-t border-line shrink-0">
+      <p class="text-[11.5px] text-muted leading-relaxed">
+        Add a YouTube link or drop a file above to make it searchable.
+      </p>
+    </div>
+  </aside>
+
+  <!-- ── RIGHT PANE — one of three, decided by your videos ────────────────── -->
+  <section class="flex-1 flex flex-col min-h-0 min-w-0">
+
+    <!-- ① NOTHING YET — this is the whole page for a first-time user. -->
+    <div id="viewAdd" class="view h-full overflow-y-auto">
+      <div class="max-w-xl mx-auto px-6 py-14 text-center">
+        <h1 class="rise display text-3xl font-bold tracking-tight" style="--d:0">Add a video to get started</h1>
+        <p class="rise text-[15px] text-muted mt-3 leading-relaxed" style="--d:1">
+          Paste a YouTube link or drop a file in the panel on the left. It becomes
+          searchable by what's <b class="text-ink">on screen</b> and by what's
+          <b class="text-ink">said</b> — ask a question and land on the exact second.
+        </p>
+
+        <div class="rise mt-8 grid gap-2.5 text-left" style="--d:3">
+          <button id="focusYt" class="bg-card border border-line hover:border-coral rounded-xl px-4 py-3 text-[13.5px] transition flex items-center gap-3">
+            <span class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 flex items-center justify-center shrink-0">▶</span>
+            <span><b class="text-ink block">Paste a YouTube link</b>
+            <span class="text-muted text-[12px]">Fastest — nothing to upload.</span></span>
+          </button>
+          <button id="focusDrop" class="bg-card border border-line hover:border-coral rounded-xl px-4 py-3 text-[13.5px] transition flex items-center gap-3">
+            <span class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 flex items-center justify-center shrink-0">⤴</span>
+            <span><b class="text-ink block">Upload your own file</b>
+            <span class="text-muted text-[12px]">Several at once is fine.
+              <!-- The cap, stated where a first-time user actually is: they meet
+                   this card before they ever open the add panel. -->
+              <span id="dropLimit" class="whitespace-nowrap"></span></span></span>
+          </button>
+        </div>
+
+        <!-- No video to hand? Send them to /demo rather than putting the sample
+             into this workspace — the workspace holds only what YOU add. -->
+        <div id="sampleHatch" class="rise mt-8 pt-6 border-t border-line" style="--d:5">
+          <p class="text-[13px] text-muted">No video handy?</p>
+          <a href="/demo" class="inline-block mt-2 text-[13.5px] font-semibold text-coral2 hover:text-coral underline decoration-line">
+            Try it on the pre-indexed sample talk →
+          </a>
+          <p class="text-[11.5px] text-muted mt-1.5">Opens the read-only demo. Your workspace stays empty.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ② PROCESSING — the queue, drawn stage by stage. -->
+    <div id="viewProc" class="view h-full overflow-y-auto">
+      <div class="max-w-2xl mx-auto px-6 py-12">
+        <div class="text-center">
+          <h1 class="display text-3xl font-bold tracking-tight">Making it searchable</h1>
+          <p id="procSub" class="text-[15px] text-muted mt-2.5 leading-relaxed"></p>
+        </div>
+        <div id="pipeline" class="mt-8 space-y-4"></div>
+        <div id="procFoot" class="mt-8 text-center"></div>
+      </div>
+    </div>
+
+    <!-- ③ ASK — centred until there's an answer, then the answer takes the room.
+         The WHOLE pane is one scroll region: the question box scrolls away with
+         the answer, and the wheel works wherever the pointer is, instead of only
+         over a nested scroller under a pinned header. -->
+    <div id="viewAsk" class="view h-full flex-col min-h-0 overflow-y-auto">
+      <div id="askTop" class="px-5 pt-6 pb-4">
+        <div id="askHead" class="text-center mb-5">
+          <!-- One line, whatever is checked. Static on purpose: a headline that
+               renamed itself with the selection (or counted it) drew the eye to a
+               fact the rail already states, every time you ticked a box. -->
+          <h1 id="askTitle" class="display text-2xl sm:text-3xl font-bold tracking-tight max-w-2xl mx-auto">Ask anything across your videos</h1>
+          <p class="text-[14px] text-muted mt-2 leading-relaxed max-w-lg mx-auto">
+            Matched on what's shown <b class="text-ink">and</b> what's said. Click any
+            citation and the video plays from that exact second.
+          </p>
+        </div>
+
+        <div class="max-w-2xl mx-auto">
+          <!-- Videos indexing WHILE you're on the ask page. Once anything is
+               searchable the pane stays on "ask" — it must, or a new upload would
+               yank you out of a question — so progress has to be visible HERE
+               instead. Collapsed it's one honest line; open it's the same stage
+               track the processing page draws. -->
+          <details id="indexingStrip" class="hidden mb-3">
+            <summary class="list-none cursor-pointer bg-card border border-coral/30 rounded-xl px-3 py-2 flex items-center gap-2 hover:border-coral transition">
+              <span class="dotPulse shrink-0"></span>
+              <span id="indexingLine" class="text-[12.5px] font-600 min-w-0 truncate"></span>
+              <span class="chev ml-auto text-[10px] text-muted shrink-0" aria-hidden="true">▾</span>
+            </summary>
+            <div id="askPipeline" class="mt-2 space-y-2.5"></div>
+            <p class="text-[11px] text-muted mt-2">
+              Keep asking — these join your searches automatically the moment they finish.
+            </p>
+          </details>
+
+          <div class="flex items-end gap-2 bg-white border border-line rounded-2xl shadow-sm px-3 py-2.5 focus-within:border-coral focus-within:ring-4 focus-within:ring-coral/15 transition">
+            <div class="relative flex-1">
+              <textarea id="q" rows="1" aria-label="Ask about the selected videos"
+                class="relative z-10 w-full bg-transparent outline-none resize-none text-[15px] leading-relaxed px-2 py-2"></textarea>
+              <div id="ghost" class="ghost px-2 py-2 text-[15px] leading-relaxed">Ask about these videos…</div>
+            </div>
+            <button id="go" aria-label="Ask"
+              class="shrink-0 w-9 h-9 rounded-xl bg-coral hover:bg-coral2 text-white flex items-center justify-center transition">→</button>
+          </div>
+          <div id="scopeNote" class="text-[11.5px] text-muted mt-2 text-center"></div>
+          <div id="starters" class="flex flex-wrap gap-2 justify-center mt-4"></div>
+        </div>
+      </div>
+      <div id="answer" class="px-5 pb-8"></div>
+    </div>
+  </section>
+</main>
+
+<!-- PLAYER MODAL -->
+<div id="modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+  <div class="bg-card w-full max-w-5xl rounded-2xl overflow-hidden shadow-2xl max-h-[92vh] flex flex-col fade-in">
+    <div class="flex items-start justify-between gap-3 px-4 py-2.5 border-b border-line">
+      <div class="min-w-0">
+        <div id="mTitle" class="text-sm font-semibold leading-snug truncate">Moment</div>
+        <div id="mMeta" class="text-xs text-muted mt-0.5"></div>
+      </div>
+      <button id="mClose" class="shrink-0 w-8 h-8 rounded-full hover:bg-paper2 flex items-center justify-center text-muted text-lg">✕</button>
+    </div>
+    <div class="flex flex-col md:flex-row min-h-0 flex-1 overflow-hidden">
+      <div class="md:flex-1 flex flex-col min-w-0">
+        <div id="playerBox" class="bg-black aspect-video shrink-0"></div>
+        <div class="flex items-center gap-3 px-4 py-3 border-t border-line">
+          <img id="mFrame" class="w-24 aspect-video object-cover rounded-lg border border-line bg-paper2" alt="matched frame">
+          <div class="text-xs text-muted">
+            <div id="mFrameLabel" class="font-semibold text-ink mb-0.5">Matched frame</div>
+            <span id="mFrameDesc"></span>
+            <a id="mOut" href="#" target="_blank" class="text-coral2 font-semibold hover:text-coral block mt-1">Open on source ↗</a>
+          </div>
+        </div>
+      </div>
+      <!-- Synced transcript: active line follows playback, click a line to jump -->
+      <div id="transcriptWrap" class="md:w-80 shrink-0 border-t md:border-t-0 md:border-l border-line flex flex-col min-h-0">
+        <div class="px-4 py-2 text-[11px] uppercase tracking-wider text-muted font-semibold border-b border-line shrink-0">Transcript · click a line to jump</div>
+        <div id="transcriptPanel" class="overflow-y-auto p-2 grow min-h-[120px] max-h-[40vh] md:max-h-none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/ui/common.js"></script>
+<script src="/ui/workspace.js"></script>
+</body>
+</html>
