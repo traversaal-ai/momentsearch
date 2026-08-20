@@ -1,4 +1,4 @@
-# Fly.io — one image, two process groups (same pattern as digital-twin-akash):
+# Fly.io — one image, two process groups:
 #   api    — stateless, always-startable, auto-stops when idle
 #   worker — polls Prefect Cloud for ingest runs (outbound only, no ports)
 #

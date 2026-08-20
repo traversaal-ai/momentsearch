@@ -1,8 +1,8 @@
 """Speaker diarization — captions/ASR give the WHEN + WHAT, Gemini gives the WHO.
 
-Fitted from digital-twin-akash's approach to MomentSearch's cue shape. Instead of
-asking an LLM to (re)write the transcript — slow, and long generations loop —
-Gemini WATCHES the video and returns only a compact SPEAKER-CHANGE INDEX:
+Fitted to MomentSearch's cue shape. Instead of asking an LLM to (re)write the
+transcript — slow, and long generations loop — Gemini WATCHES the video and
+returns only a compact SPEAKER-CHANGE INDEX:
 
     HH:MM:SS | Speaker Full Name | first words of that turn, verbatim
 

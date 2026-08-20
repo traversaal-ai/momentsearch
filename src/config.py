@@ -1,8 +1,8 @@
 """Central env-driven config — every knob in one place.
 
-Same conventions as the digital-twin-akash service: module-level constants,
-provider-neutral STORAGE_* credentials with AWS_* fallbacks, Prefect Cloud
-read straight from PREFECT_API_URL / PREFECT_API_KEY by the SDK.
+Conventions here: module-level constants, provider-neutral STORAGE_*
+credentials with AWS_* fallbacks, Prefect Cloud read straight from
+PREFECT_API_URL / PREFECT_API_KEY by the SDK.
 
 Model choice follows the same provider-neutral idea: pick a provider NAME and
 src/providers/registry.py supplies the endpoint, the default model, the vector
