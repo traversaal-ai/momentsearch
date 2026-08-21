@@ -249,4 +249,3 @@ To redeploy after a code change, just run `fly deploy --ha=false` again.
 
 - **Storage options** — Tigris (above) is the easy one on Fly. Google Cloud and Amazon work too: [gcp.md](gcp.md#object-storage), [aws.md](aws.md#object-storage). Each bucket stays private; the app reaches it with keys, not public access.
 - **GPU / big jobs** — Fly is CPU-only. For a GPU embedder, run the `clip` part on a GPU machine elsewhere and point `EMBED_SERVICE_URL` at it, using [`fly.slim.toml`](../fly.slim.toml) for the Fly side.
-- **Auto-deploy from GitHub** — `.github/workflows/fly-deploy.yml` redeploys on each push, using the same token. Add a `FLY_API_TOKEN` repo secret (make a deploy-only token with `fly tokens create deploy -x 999999h`).

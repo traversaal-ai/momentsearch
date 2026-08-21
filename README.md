@@ -200,7 +200,6 @@ One neutral Docker image with four entrypoints (`api`, `worker`, `clip`, one-sho
 - **Fat** (default, `docker build .`) — bundles the local CLIP model; one image runs api + worker + clip and embeds in-process. Simplest deploy.
 - **Slim** (`docker build --build-arg WITH_TORCH=false .`) — no local model; api + worker send embedding to a separate CLIP service via `EMBED_SERVICE_URL`. Use it when embedding is the bottleneck or you want CLIP on a GPU (build the service from `Dockerfile.clip`; `fly.slim.toml` runs the slim app with CLIP on an external GPU host).
 - **Seed** — a one-shot service indexes the sample talk before `api`/`worker` start, so the first request to `/demo` already has something to answer (`SEED_SAMPLE_VIDEOS=false` skips it).
-- **CI/CD** — [`.github/workflows/fly-deploy.yml`](.github/workflows/fly-deploy.yml) deploys on every push to `dev` (needs a `FLY_API_TOKEN` repo secret).
 
 Step-by-step per platform → **[Fly](deployment_docs/fly.md)** · **[AWS](deployment_docs/aws.md)** · **[Google Cloud](deployment_docs/gcp.md)** (index: [DEPLOYMENT.md](DEPLOYMENT.md)).
 
