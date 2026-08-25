@@ -72,6 +72,24 @@ function saveOff(){
   try{ localStorage.setItem(OFF_KEY, JSON.stringify([...OFF])); }catch{}
 }
 
+/* ---------- speaker-recognition preference ----------
+   Sticky per browser, like the excluded-video scope above. It describes the
+   video you add NEXT, so it has to survive a reload: otherwise you set it,
+   come back, and quietly add the next video with the wrong setting. It is a
+   user preference and NOT a library setting — restoring it never re-indexes
+   anything, and never touches a video that is already queued or indexed. */
+const DIA_KEY="ms_speaker_recognition";
+function loadDiarizePref(){
+  const chk=$("#diarizeChk");
+  if(!chk || chk.disabled) return;          // no key -> stays off, nothing to restore
+  try{ chk.checked = localStorage.getItem(DIA_KEY)==="1"; }catch{}
+}
+function saveDiarizePref(){
+  const chk=$("#diarizeChk");
+  if(!chk) return;
+  try{ localStorage.setItem(DIA_KEY, chk.checked?"1":"0"); }catch{}
+}
+
 /* ---------- the upload size cap ----------
    MAX_UPLOAD_MB on the server (2048 by default ≈ a 90-minute video at 720p).
    The server enforces it three times — presign, direct upload, and register's
@@ -118,6 +136,11 @@ renderLimit();
       if(dhint) dhint.classList.remove("hidden");
       $("#diarizeRow").classList.add("opacity-60","cursor-not-allowed");
     }
+    // Restore the sticky preference only AFTER the availability check above: a
+    // switch that is disabled for a missing key must stay off no matter what
+    // the last session preferred, or it would read as on and do nothing.
+    loadDiarizePref();
+    if(dchk) dchk.addEventListener("change", saveDiarizePref);
     // The button is always on screen; this only decides whether clicking opens
     // Google's picker or explains what's missing (see its handler).
     if(c.gdrive && c.gdrive.enabled) GD=c.gdrive;
@@ -254,6 +277,16 @@ function renderVideoList(){
   wireRowButtons(box);
 }
 
+/* The stamped receipt for one video: what it was ACTUALLY queued with, not what
+   the switch currently says. Every row renders it, both states, so a mixed list
+   is readable without opening anything — that is the whole point of stamping.
+   Inert by design: a record, never a control (see .spk in app.css). */
+function spkBadge(v){
+  return v.diarize
+    ? `<span class="spk spk-on">Speakers on</span>`
+    : `<span class="spk spk-off">Speakers off</span>`;
+}
+
 function videoRow(v){
   const b=statusBadge(v);
   // A delete in flight owns the row: no checkbox to toggle, no second ✕ to press,
@@ -302,7 +335,10 @@ function videoRow(v){
     ${thumb}
     <div class="min-w-0 flex-1">
       <div class="text-[12px] font-600 leading-snug line-clamp-2 text-ink">${esc(v.title||v.id)}</div>
-      <div class="text-[10.5px] ${b.c} mt-0.5 truncate">${esc(b.label)}${pct!==null&&busy?` · ${pct}%`:""}${v.diarize?" · 🎙":""}</div>
+      <div class="text-[10.5px] ${b.c} mt-0.5 flex items-center gap-1.5 min-w-0">
+        <span class="truncate">${esc(b.label)}${pct!==null&&busy?` · ${pct}%`:""}</span>
+        ${spkBadge(v)}
+      </div>
       ${rail}
       ${v.status==="indexed" && v.transcript_note
         ? `<div class="text-[10px] text-[#8a6d1a] mt-1 leading-snug line-clamp-2" title="${esc(v.transcript_note)}">⚠ ${esc(v.transcript_note)}</div>`
@@ -372,7 +408,7 @@ function pipelineCards(list, pad="p-4"){
     const b=statusBadge(v);
     return `<div class="bg-card border border-line rounded-2xl ${pad}">
       <div class="flex items-center gap-2">
-        <div class="text-[13px] font-600 leading-snug line-clamp-1 min-w-0 flex-1">${esc(v.title||v.id)}${v.diarize?' <span class="text-[10px] text-coral2">🎙 speakers</span>':""}</div>
+        <div class="text-[13px] font-600 leading-snug line-clamp-1 min-w-0 flex-1">${esc(v.title||v.id)} ${spkBadge(v)}</div>
         <div class="text-[11.5px] ${b.c} shrink-0">${b.icon} ${esc(b.label)}${pct!==null&&!done?` · ${pct}%`:""}</div>
       </div>
       ${v.status==="failed"

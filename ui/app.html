@@ -135,17 +135,29 @@
           <span id="gdriveLabel">Import from Google Drive</span>
         </button>
 
-        <!-- Speaker recognition ("who said what") — applies to videos you add
-             next. Gemini-only: workspace.js disables it and shows the hint when
+        <!-- Speaker recognition ("who said what"). ONE RULE: this describes the
+             video you add NEXT. Its value is stamped onto each job at submit
+             time (workspace.js::register) and is immutable from then on, so
+             flipping it later changes nothing about videos already in the list.
+             Each row carries its own stamped badge as the receipt. The scope
+             line below says so out loud, because otherwise a user has to guess
+             whether this is a library-wide setting that re-indexes everything.
+             Gemini-only: workspace.js disables it and shows the hint when
              GEMINI_API_KEY isn't set, and the server rejects it without a key. -->
-        <label id="diarizeRow" class="flex items-start gap-2 text-[12px] bg-card border border-line rounded-lg p-2.5 cursor-pointer">
-          <input id="diarizeChk" type="checkbox" class="mt-0.5 accent-coral shrink-0">
-          <span class="min-w-0">
-            <span class="font-600 text-ink">Speaker recognition</span>
-            <span class="text-muted">Labels who said what. Slower to index.</span>
-            <span id="diarizeHint" class="block text-[10.5px] text-coral2 mt-0.5 hidden">Needs <code>GEMINI_API_KEY</code>.</span>
-          </span>
-        </label>
+        <div id="diarizeRow" class="text-[12px] bg-card border border-line rounded-[10px] p-2.5">
+          <label class="flex items-start gap-2.5 cursor-pointer">
+            <span class="min-w-0 flex-1">
+              <span class="block font-600 text-ink">Speaker recognition</span>
+              <span class="block text-muted leading-snug mt-0.5">Labels who said what. Adds about 40% to indexing time.</span>
+            </span>
+            <span class="sw mt-0.5">
+              <input id="diarizeChk" type="checkbox" role="switch" aria-describedby="diarizeScope">
+              <i aria-hidden="true"></i>
+            </span>
+          </label>
+          <div id="diarizeScope" class="text-[11px] text-coral2 mt-2 pt-2 border-t border-line">Applies to the next video you add.</div>
+          <span id="diarizeHint" class="block text-[10.5px] text-coral2 mt-1 hidden">Needs <code>GEMINI_API_KEY</code>.</span>
+        </div>
 
         <div id="upList" class="space-y-1.5"></div>
         <div id="ingestStatus" class="text-[11.5px] text-muted min-h-[15px]"></div>

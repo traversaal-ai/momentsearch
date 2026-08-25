@@ -401,3 +401,33 @@ body[data-ans="1"] #answer{flex:0 0 auto}
   font-size:.68rem;color:#9aa0a6;margin-right:.45rem;}
 .tline.active{background:rgba(226,104,60,.12);color:#1a1a1a;}
 .tline.active .ts{color:#e2683c;font-weight:600;}
+
+/* ── Speaker recognition: the switch and the receipt ────────────────────────
+ * The control is a REAL checkbox, visually replaced by a switch, so keyboard,
+ * focus and screen readers keep working (role="switch" carries the semantics)
+ * and workspace.js still reads #diarizeChk.checked at submit time exactly as
+ * before. The <i> must follow the input: the checked state is drawn through
+ * the adjacent-sibling selector.
+ *
+ * Geometry from the handoff: 34x20 track, 16px knob, 2px inset, so the travel
+ * is 34 - 16 - (2*2) = 14px. */
+.sw{position:relative;display:inline-block;width:34px;height:20px;flex:none}
+.sw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.sw i{position:absolute;inset:0;border-radius:999px;background:#DCD5C7;
+  transition:background .18s ease;pointer-events:none}
+.sw i::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;
+  border-radius:999px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.18);
+  transition:transform .18s ease}
+.sw input:checked + i{background:#E86649}
+.sw input:checked + i::after{transform:translateX(14px)}
+.sw input:focus-visible + i{outline:2px solid #B82C14;outline-offset:2px}
+.sw input:disabled{cursor:not-allowed}
+
+/* The per-row receipt: what that video was ACTUALLY indexed with, stamped when
+   it was queued. Deliberately inert — it is a record, not a control, so it
+   carries no hover, no pointer and no focus ring. Flipping the switch above
+   never reaches back and changes one of these. */
+.spk{display:inline-flex;align-items:center;border-radius:999px;padding:1px 6px;
+  font-size:10px;font-weight:700;line-height:1.6;white-space:nowrap;flex:none}
+.spk-on{color:#B8452C;background:#FBEDE9}
+.spk-off{color:#8A8175;background:#F1ECE2}
