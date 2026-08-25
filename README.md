@@ -19,13 +19,86 @@ Upload videos or paste YouTube URLs. Background workers sample keyframes, dedup,
 
 # Setup
 
+**Never used Docker or Postgres? Start here.** **Docker** is the only thing you need to install — Postgres, Qdrant, the CLIP model and the app itself all come up *inside* Docker.
+
+<details>
+<summary><b>🐳 Install Docker — required — click for steps</b></summary>
+
+Docker runs the whole stack (app, ingest worker, Postgres, Qdrant) as containers, so nothing gets installed on your machine and nothing to uninstall later. Install **Docker Desktop** — it includes the `docker compose` command this README uses.
+
+**Windows 10/11**
+
+1. Download **Docker Desktop for Windows** → [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/) and run the installer with *"Use WSL 2"* checked (the default).
+2. If the installer complains WSL is missing, open **PowerShell as Administrator**, run `wsl --install`, reboot, then re-run the installer.
+3. Launch **Docker Desktop** and wait until the whale icon says **"Engine running"**.
+
+**macOS**
+
+1. Download **Docker Desktop for Mac** — pick **Apple silicon** (M1/M2/M3/M4) or **Intel chip**; the wrong one won't start.
+2. Open the `.dmg`, drag **Docker** into **Applications**, launch it, and approve the privileged-helper prompt.
+
+**Linux (Ubuntu / Debian)**
+
 ```bash
-git clone https://github.com/traversaal-ai/momentsearch.git
-cd momentsearch
-cp .env.local.example .env      # local & keyless preset
-docker compose up --build
+curl -fsSL https://get.docker.com | sh     # installs Docker Engine + compose plugin
+sudo usermod -aG docker $USER              # run docker without sudo
+newgrp docker                              # or just log out and back in
+```
+
+**Check it worked** — both commands must print a version:
+
+```bash
+docker --version           # Docker version 24.x or newer
+docker compose version     # v2.x  ← a SPACE, not the old `docker-compose`
+```
+
+**Two gotchas**
+
+- Docker Desktop must be **running** before `docker compose up`, or you get `cannot connect to the Docker daemon`.
+- Give it room: **Settings → Resources → Memory ≥ 4 GB** (8 GB is comfortable — the first build downloads PyTorch).
+
+</details>
+
+<details>
+<summary><b>🐘 Postgres — you do NOT need to install it — click to see why</b></summary>
+
+MomentSearch stores its video manifest in Postgres, but with the `.env.local.example` preset **Docker runs Postgres for you**: that file sets `COMPOSE_PROFILES=local-qdrant,local-postgres`, so `docker compose up` starts a `postgres:16` container (and a local Qdrant) and `DATABASE_URL` already points at it. No install, no password to invent, no `createdb`. Same for the vector store.
+
+Want to poke at the data? The container is published on host port **5433** (dodging any native Postgres on 5432):
+
+```bash
+psql postgresql://ms:ms@localhost:5433/ms        # or paste this into TablePlus / pgAdmin
+```
+
+**Only install Postgres yourself if** you're running the [Without Docker](#without-docker) path, or you want to point at your own database.
+
+- **Managed, zero install (easiest):** create a free Postgres at [neon.com](https://neon.com), paste its connection string into `DATABASE_URL`, and remove `local-postgres` from `COMPOSE_PROFILES`.
+- **Windows:** the [EDB installer](https://www.enterprisedb.com/downloads/postgres-postgresql-downloads) — keep port `5432`, and write down the `postgres` password it asks for.
+- **macOS:** `brew install postgresql@16 && brew services start postgresql@16`
+- **Ubuntu/Debian:** `sudo apt install postgresql && sudo systemctl enable --now postgresql`
+
+Then create the database and point the app at it:
+
+```bash
+createdb ms                                                    # macOS/Linux; Windows: use pgAdmin or psql -U postgres
+# in .env:
+#   DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/ms
+#   COMPOSE_PROFILES=local-qdrant          <- local-postgres removed
+```
+
+</details>
+
+**Now open a terminal** — **PowerShell** or **Git Bash** on Windows, **Terminal** on macOS, any shell on Linux — and `cd` to wherever you keep projects (`cd ~/code`, or `cd $HOME\Desktop` on Windows). Then paste these four lines one at a time:
+
+```bash
+git clone https://github.com/traversaal-ai/momentsearch.git   # copy the code down (makes a momentsearch/ folder)
+cd momentsearch                                               # step into that folder — every command below runs from here
+cp .env.local.example .env                                    # local & keyless preset
+docker compose up --build                                     # build the image and start the stack
 # → http://localhost:8000
 ```
+
+Leave that last command **running** — it's the app; `Ctrl+C` stops it, and `docker compose up` (no `--build`) starts it again later.
 
 `.env.local.example` keeps the whole stack **on your machine, keyless** — storage, models, Qdrant and Postgres all run locally (`DATABASE_URL` and `QDRANT_URL` are covered by the `local-postgres` / `local-qdrant` compose profiles). Two things to fill in: **Prefect** (`PREFECT_API_URL` + `PREFECT_API_KEY`, the ingest queue — free, no card, from [app.prefect.cloud](https://app.prefect.cloud) → avatar → API Keys), and your **OpenAI key** (`OPENAI_API_KEY`) for written, cited answers + upload transcription (OpenAI is the simplest default — see [MODELS.md](MODELS.md) to choose another model/provider). Leave OpenAI blank and search still works — you get ranked, clickable moments, just no prose.
 

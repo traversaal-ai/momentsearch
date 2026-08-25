@@ -236,10 +236,10 @@ function openMoment(list, n){
   $("#mFrameLabel").textContent = c.whole ? "The whole video"
     : isFrame ? "Matched frame" : "Matched on transcript";
   $("#mFrameDesc").textContent = c.whole
-    ? "Nothing was searched for yet — this is the source, playing from 0:00. The transcript beside it is click-to-jump."
+    ? "Nothing was searched for yet. This is the source, playing from 0:00. The transcript beside it is click-to-jump."
     : isFrame
-    ? "This is what CLIP matched your question against — the still it judged closest to what you asked."
-    : "This moment matched on what was said (transcript). The still is the video at that moment — press play to jump to the exact spot.";
+    ? "This is what CLIP matched your question against: the still it judged closest to what you asked."
+    : "This moment matched on what was said (transcript). The still is the video at that moment. Press play to jump to the exact spot.";
   $("#mOut").href=c.deeplink||"#";
 
   teardownPlayer();
@@ -333,7 +333,7 @@ function putWithProgress(url, headers, file, onPct){
     xhr.upload.onprogress=e=>{ if(e.lengthComputable && onPct) onPct(e.loaded/e.total); };
     xhr.onload=()=> (xhr.status>=200 && xhr.status<300)
       ? resolve() : reject(new Error(`upload failed (${xhr.status})`));
-    xhr.onerror=()=>reject(new Error("upload failed — network error"));
+    xhr.onerror=()=>reject(new Error("upload failed: network error"));
     xhr.send(file);
   });
 }

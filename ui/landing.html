@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>MomentSearch — search inside video by what's on screen</title>
+<title>MomentSearch: search inside video by what's on screen</title>
 <link rel="icon" href="/ui/assets/momentsearch-mark.svg">
 <link rel="apple-touch-icon" href="/ui/assets/traversaal-mark.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -13,7 +13,8 @@
 <script>
   tailwind.config = { theme: { extend: {
     colors: { paper:"#FBF7F0", paper2:"#F3ECE0", card:"#FFFFFF", ink:"#1E1B16",
-              muted:"#6B6357", line:"#E7DECF", coral:"#FF5A3C", coral2:"#E8472B" },
+              muted:"#6B6357", line:"#E7DECF", coral:"#FF5A3C", coral2:"#E8472B",
+              ember:"#B82C14" },
     fontFamily: { serif:['Fraunces','Georgia','serif'], sans:['Inter','system-ui','sans-serif'] },
   }}}
 </script>
@@ -52,16 +53,17 @@
   </div>
 </header>
 
-<main class="flex-1 max-w-5xl w-full mx-auto px-6 flex flex-col justify-center py-16">
+<main class="max-w-5xl w-full mx-auto px-6 flex flex-col pt-16 sm:pt-20 pb-20">
 
   <div class="text-center">
     <div class="rise inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-7" style="--d:0">
       ● Open source · Apache 2.0
     </div>
-    <h1 id="heroTitle" class="display text-5xl sm:text-6xl font-bold leading-[1.08] tracking-tight"></h1>
-    <p class="rise mt-6 text-[18px] text-muted leading-relaxed mx-auto max-w-xl" style="--d:6">
-      Ask a question and get the exact second it happens — matched on what's
-      <b class="text-ink font-600">shown on screen</b>, not just what's said.
+    <h1 id="heroTitle" class="balance display text-5xl sm:text-6xl font-bold leading-[1.08] tracking-tight"></h1>
+    <!-- The subhead's job is the gap, not the feature list: transcript search is
+         the thing everyone already has, and the thing it can't do is the pitch. -->
+    <p class="pretty rise mt-6 text-[18px] text-muted leading-relaxed mx-auto max-w-2xl" style="--d:6">
+      MomentSearch reads what's on screen, not just the transcript.
     </p>
 
     <!-- One door in, and a side entrance for the read-only samples. There is no
@@ -75,35 +77,118 @@
       </a>
     </div>
     <p class="rise mt-4 text-xs text-muted" style="--d:10">
-      Jump straight in — the workspace opens instantly with a pre-indexed talk
+      Jump straight in. The workspace opens instantly with a pre-indexed talk
       already loaded. Add your own YouTube links or uploads any time.
     </p>
+
+    <!-- The proof: a question meets one exact point on a timeline, not four
+         paragraphs asserting it. This is a diagram of the mechanism - visual
+         frames above the line, speech below it, one frame lit up because that's
+         the one that matched - not a screenshot, since no specific query or
+         timestamp here is a captured real result. The lit marker reuses the
+         wordmark's own ring-and-triangle glyph, so the proof and the brand are
+         drawn with the same hand. -->
+    <div class="rise mt-12 mx-auto max-w-2xl text-left" style="--d:9">
+      <div id="proofCard" class="proof bg-card border border-line rounded-2xl p-5 sm:p-6 shadow-sm">
+        <div class="flex items-center gap-1.5 text-xs font-semibold text-muted">
+          <svg viewBox="0 0 16 16" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="5.5"/><path d="M11 11l3.5 3.5"/></svg>
+          Asked
+        </div>
+        <!-- The visible question is typed a character at a time, so it is not a
+             stable thing for a screen reader to read; it carries aria-hidden and
+             this static copy is what actually gets announced. -->
+        <p class="sr-only">Asked: how should a product manager actually use AI day to day? MomentSearch returned three moments from the Lenny's Podcast corpus, at 53:13, 44:44 and 33:03.</p>
+        <p id="proofQuery" class="pt-q display text-lg sm:text-xl font-medium text-ink mt-1" aria-hidden="true"></p>
+
+        <!-- Searching, then found: the pulse is the only thing on the card that
+             says work is happening, so it runs for exactly as long as the sweep
+             below it does and stops when the results land. -->
+        <div class="relative h-5 mt-3 mb-1 text-xs" aria-hidden="true">
+          <div class="pt-search absolute inset-0 flex items-center gap-2 text-muted">
+            <span class="pt-dot"></span>
+            <span>Searching 100 episodes: every frame, and everything said</span>
+          </div>
+          <div class="pt-found absolute inset-0 flex items-center gap-2 font-semibold text-ink">
+            <svg viewBox="0 0 16 16" class="w-3.5 h-3.5 text-ember" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg>
+            <span>3 moments found</span>
+          </div>
+        </div>
+
+        <svg id="proofTimeline" viewBox="0 0 480 100" class="w-full block" aria-hidden="true"></svg>
+
+        <!-- The moments themselves. Populated from a real captured result, so
+             the thumbnails are the real videos and the timestamps are the real
+             timestamps -- see PT_HITS in the script below. -->
+        <div id="proofResults" class="grid grid-cols-3 gap-2 sm:gap-3 mt-4" aria-hidden="true"></div>
+
+        <p class="pt-cap mt-4 text-xs text-muted leading-relaxed">
+          Ranked on what each frame <span class="text-ember font-semibold">shows on screen</span> as well as what was said around it, so a moment counts even when nobody names it out loud.
+        </p>
+      </div>
+    </div>
   </div>
 
-  <!-- three steps -->
-  <div class="rise mt-20 grid sm:grid-cols-3 gap-5" style="--d:12">
-    <div class="bg-card border border-line rounded-2xl p-5">
-      <div class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 text-xs font-bold flex items-center justify-center display">1</div>
-      <h3 class="display text-lg font-600 mt-3">Add a video</h3>
-      <p class="text-sm text-muted leading-relaxed mt-1">
-        Paste a YouTube link or upload a file. It goes into whichever session you're working in.
+  <!-- three steps: a sequence, not a feature grid - a solid spine runs through
+       the numerals so the order reads before the copy does. On sm+ each step is
+       a centred stack: the numeral sits on the column's centre line with its
+       copy directly beneath it, so the spine threads the three dots like beads
+       on a wire and the eye reads across the row before it reads down any one
+       step. Below sm, where the grid collapses to one column, that stack turns
+       back into a left rail - the spine goes vertical and the numerals hang off
+       the left edge - because a centred column of three dots on a phone reads as
+       three unrelated cards, not as a sequence. -->
+  <section class="mt-24 sm:mt-32">
+    <h2 class="rise display text-2xl sm:text-3xl font-bold text-center" style="--d:11">How it works</h2>
+    <div class="rise mt-10 relative grid sm:grid-cols-3 gap-x-8 gap-y-10 sm:gap-y-12" style="--d:12">
+      <div class="spine-v sm:hidden absolute w-px bg-line" aria-hidden="true"></div>
+      <div class="spine hidden sm:block absolute h-px bg-line" aria-hidden="true"></div>
+      <div class="relative pl-12 sm:pl-0 sm:px-2 sm:text-center">
+        <div class="step-num absolute left-0 sm:relative sm:left-auto sm:mx-auto sm:z-10 w-8 h-8 rounded-full bg-coral text-ink text-xs font-bold flex items-center justify-center display">1</div>
+        <h3 class="display text-lg font-semibold sm:mt-4">Point it at a video</h3>
+        <p class="pretty text-sm text-muted leading-relaxed mt-1.5 sm:mx-auto sm:max-w-[17rem]">
+          Paste a YouTube link or upload your own file. Indexing runs once, in the
+          background, nothing to configure.
+        </p>
+      </div>
+      <div class="relative pl-12 sm:pl-0 sm:px-2 sm:text-center">
+        <div class="step-num absolute left-0 sm:relative sm:left-auto sm:mx-auto sm:z-10 w-8 h-8 rounded-full bg-coral text-ink text-xs font-bold flex items-center justify-center display">2</div>
+        <h3 class="display text-lg font-semibold sm:mt-4">It watches and listens</h3>
+        <p class="pretty text-sm text-muted leading-relaxed mt-1.5 sm:mx-auto sm:max-w-[17rem]">
+          Frames are read and speech is transcribed, then aligned on one timeline,
+          so a slide and the sentence explaining it stay connected.
+        </p>
+      </div>
+      <div class="relative pl-12 sm:pl-0 sm:px-2 sm:text-center">
+        <div class="step-num absolute left-0 sm:relative sm:left-auto sm:mx-auto sm:z-10 w-8 h-8 rounded-full bg-coral text-ink text-xs font-bold flex items-center justify-center display">3</div>
+        <h3 class="display text-lg font-semibold sm:mt-4">Ask, then watch</h3>
+        <p class="pretty text-sm text-muted leading-relaxed mt-1.5 sm:mx-auto sm:max-w-[17rem]">
+          Every answer cites the moments it came from. Click one and the video
+          plays from that exact second, so you can check the claim yourself.
+        </p>
+      </div>
+    </div>
+
+    <!-- What the demo is and isn't. Sits with the steps rather than buried in
+         the footer, because this is where someone decides to click "Search the
+         samples". A bordered card, not a bare paragraph, so it reads as a
+         deliberate notice instead of an afterthought. Quiet, not alarming:
+         this is an educational notice, not a warning. -->
+    <div id="demo-terms" class="rise mt-16 mx-auto max-w-2xl bg-card border border-line rounded-2xl p-5 sm:p-6" style="--d:13">
+      <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-2">About this demo</div>
+      <p class="pretty text-left text-xs text-muted leading-relaxed">
+        The sample corpus indexes one publicly available video,
+        <a class="text-ink font-semibold hover:text-coral2 transition" target="_blank" rel="noopener"
+           href="https://youtu.be/LPZh9BOjkQs">Large Language Models explained briefly</a>
+        by <a class="text-ink font-semibold hover:text-coral2 transition" target="_blank" rel="noopener"
+           href="https://www.youtube.com/@3blue1brown">3Blue1Brown</a>, and is provided for
+        research and educational purposes only, under the
+        <a class="text-ink font-semibold hover:text-coral2 transition" target="_blank" rel="noopener"
+           href="https://www.apache.org/licenses/LICENSE-2.0">Apache&nbsp;2.0</a> license,
+        not for commercial use. It is not affiliated with or endorsed by the creator,
+        and all content remains the property of its respective owner.
       </p>
     </div>
-    <div class="bg-card border border-line rounded-2xl p-5">
-      <div class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 text-xs font-bold flex items-center justify-center display">2</div>
-      <h3 class="display text-lg font-600 mt-3">It watches and listens</h3>
-      <p class="text-sm text-muted leading-relaxed mt-1">
-        Frames are sampled and embedded with CLIP; captions are chunked and embedded too. Two ways in.
-      </p>
-    </div>
-    <div class="bg-card border border-line rounded-2xl p-5">
-      <div class="w-7 h-7 rounded-lg bg-coral/12 text-coral2 text-xs font-bold flex items-center justify-center display">3</div>
-      <h3 class="display text-lg font-600 mt-3">Ask, then watch</h3>
-      <p class="text-sm text-muted leading-relaxed mt-1">
-        You get a cited answer. Click any citation and that exact moment plays.
-      </p>
-    </div>
-  </div>
+  </section>
 </main>
 
 <footer class="border-t border-line">
@@ -136,6 +221,142 @@
       : esc(w);
     return `<span class="word" style="--i:${i++}">${inner}</span>`;
   }).join(" ")).join(" ");
+
+  /* ── The proof strip ──────────────────────────────────────────────────────
+   * A diagram, not a screenshot: no query or timestamp here is a captured real
+   * result, so it's drawn as the mechanism itself - visual frames above a
+   * timeline, speech below it, one frame lit because that's the one that
+   * matched. The lit marker is the wordmark's own ring-and-triangle glyph at
+   * small scale, so the proof is drawn with the same hand as the brand.
+   *
+   * It animates because the mechanism is a SEQUENCE, and the still frame of a
+   * sequence is the least informative frame of it: a marker already lit, with no
+   * account of how it got lit. The loop states the claim instead of asserting
+   * it - question, then a sweep that touches EVERY frame and EVERY word, then
+   * one second winning. Timing and the matching CSS live in app.css. */
+  const PT_QUERY = "“How should a PM actually use AI day to day?”";
+  const PT_REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* A captured result, not a mock-up: this is what /lenny/ask_stream returned for
+     that question, top three distinct videos by score. The thumbnails are those
+     videos' own stills and the timestamps are the real ones, which is the whole
+     reason the card can claim anything. `tick` is which marker on the strip
+     belongs to each, spread across the axis - the strip stands for the corpus
+     being scanned, so it carries no timestamp of its own; three moments from
+     three different videos could not honestly share one video's timeline. */
+  /* pct = percent of the top match, from the captured scores (2.872, 1.403,
+     1.336) — the same relative-to-top number the studio cards show. */
+  const PT_HITS = [
+    {yt:"scsW6_2SPC4", ts:"53:13", tick:2,  pct:100, cls:"pt-rel-hi",
+     title:"OpenAI's CPO on how AI changes must-have skills"},
+    {yt:"ixY2PvQJ0To", ts:"44:44", tick:6,  pct:49,  cls:"pt-rel-mid",
+     title:"Inside ChatGPT: the fastest-growing product in history"},
+    {yt:"HbbfXAWcuUo", ts:"33:03", tick:11, pct:47,  cls:"pt-rel-mid",
+     title:"Microsoft's CPO: prototype with AI or you're doing it wrong"},
+  ];
+  const PT_TICKS_HIT = new Set(PT_HITS.map(h=>h.tick));
+
+  const TICKS=14, MARGIN=20, VW=480;
+  const tickX = i => MARGIN + i*((VW-2*MARGIN)/(TICKS-1));
+  const waveH = [4,7,10,6,9,13,8,5,11,14,9,6,10,15,8,5,9,12,7,10,13,6,8,11];
+  // Spacing used to divide by a WAVE constant of 22 while this array holds 24
+  // bars, so the last two were laid out past x=480 and silently clipped by the
+  // viewBox. Divide by what is actually here.
+  const waveX = i => MARGIN + i*((VW-2*MARGIN)/(waveH.length-1));
+
+  const frames = Array.from({length:TICKS}, (_,i)=>{
+    const x = tickX(i);
+    // Two rects sit at each winning position: the dim one that matches its
+    // neighbours and steps aside, and the coral one that grows in its place.
+    // Cross-fading two shapes beats animating fill and geometry on a single one,
+    // which needs SVG geometry properties that older engines won't animate. Both
+    // carry --i, so each lights exactly as the sweep reaches it.
+    if(PT_TICKS_HIT.has(i)){
+      return `<rect class="pt-tick pt-hit-dim" style="--i:${i}" x="${x-4}" y="58" width="8" height="16" rx="2"/>
+              <rect class="pt-hit-bar" style="--i:${i}" x="${x-4}" y="40" width="8" height="34" rx="2" fill="#FF5A3C"/>`;
+    }
+    return `<rect class="pt-tick" style="--i:${i}" x="${x-4}" y="58" width="8" height="16" rx="2"/>`;
+  }).join("");
+  const wave = waveH.map((h,i)=>
+    `<rect class="pt-bar" style="--i:${i}" x="${waveX(i)-3}" y="80" width="6" height="${h}" rx="1.5"/>`
+  ).join("");
+  $("#proofTimeline").innerHTML = `
+    <defs>
+      <linearGradient id="ptScanFade" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#FF5A3C" stop-opacity="0"/>
+        <stop offset="1" stop-color="#FF5A3C" stop-opacity="0.2"/>
+      </linearGradient>
+    </defs>
+    <line x1="8" y1="76" x2="472" y2="76" stroke="#E7DECF" stroke-width="2"/>
+    ${frames}
+    ${wave}
+    <g class="pt-scan">
+      <rect x="-27" y="24" width="46" height="68" fill="url(#ptScanFade)"/>
+      <rect x="19" y="24" width="2" height="68" rx="1" fill="#FF5A3C"/>
+    </g>`;
+
+  /* The result cards. Same relevance vocabulary as the studio's moment cards:
+     percent of the answer's top match, banded green / amber — the number carries
+     the meaning, colour only speeds up the read. */
+  $("#proofResults").innerHTML = PT_HITS.map((h,i)=>`
+    <div class="pt-card" style="--i:${i}">
+      <div class="pt-shot">
+        <img loading="lazy" alt="" src="https://img.youtube.com/vi/${h.yt}/mqdefault.jpg"
+          onerror="this.style.display='none'">
+        <span class="pt-ts">${h.ts}</span>
+      </div>
+      <div class="pt-rel ${h.cls}">${h.pct}% match</div>
+      <div class="pt-ct">${h.title}</div>
+    </div>`).join("");
+
+  /* The question is set once and measured, then cleared: without a reserved
+     height the card would grow a line as the text is typed and shove the whole
+     page down on every pass. */
+  const proofCard=$("#proofCard"), pqEl=$("#proofQuery");
+  function ptMeasure(){
+    const shown=pqEl.textContent;
+    pqEl.style.minHeight="";
+    pqEl.textContent=PT_QUERY;
+    pqEl.style.minHeight=pqEl.offsetHeight+"px";
+    pqEl.textContent=shown;
+  }
+  ptMeasure();
+  addEventListener("resize", ptMeasure, {passive:true});
+
+  if(PT_REDUCED){
+    pqEl.textContent=PT_QUERY;
+    proofCard.classList.add("play");        // app.css lands it on the finished diagram
+  }else{
+    let typed=false, tType=null, tLoop=null;
+    const type=()=>{
+      let n=0;
+      proofCard.classList.add("typing");
+      (function step(){
+        pqEl.textContent=PT_QUERY.slice(0,++n);
+        if(n<PT_QUERY.length) tType=setTimeout(step, 1350/PT_QUERY.length);
+        else { proofCard.classList.remove("typing"); typed=true; }
+      })();
+    };
+    const cycle=()=>{
+      proofCard.classList.remove("play");
+      void proofCard.offsetWidth;            // reflow, or re-adding the class won't restart
+      proofCard.classList.add("play");
+      // Typed once, not on every pass. Retyping it each loop reads as the page
+      // repeating itself; typing it once and re-running the search reads as what
+      // it actually is - one question, matched again.
+      if(typed) pqEl.textContent=PT_QUERY; else type();
+      // The caption, the last thing in, settles at ~6.2s; the rest is dwell on
+      // the finished result before the search runs again.
+      tLoop=setTimeout(cycle, 9800);
+    };
+    // Only runs while it is on screen. A loop animating in a scrolled-past hero
+    // is spending a phone's battery to be seen by nobody. Stopping leaves the
+    // finished diagram in place rather than a half-drawn one.
+    new IntersectionObserver(([e])=>{
+      if(e.isIntersecting){ if(!tLoop) cycle(); }
+      else { clearTimeout(tLoop); clearTimeout(tType); tLoop=null; }
+    },{threshold:.25}).observe(proofCard);
+  }
 
   // No wireNav() here: this page's header has no #navAuth link (the hero button
   // is the way in). wireNav() is a no-op without one, but calling it would imply

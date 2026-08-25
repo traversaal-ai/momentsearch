@@ -50,7 +50,7 @@ wireNav();   // top-right → the workspace
       b.textContent="LLM: "+(c.llm_model||c.llm_provider);
       b.className="ml-auto text-xs px-3 py-1 rounded-full border border-[#cfe8d6] text-[#1f7a43]";
     } else {
-      b.textContent="No LLM — moments only";
+      b.textContent="No LLM, moments only";
       b.className="ml-auto text-xs px-3 py-1 rounded-full border border-[#e7c46a] text-[#8a6d1a] bg-[#fbf2d8]";
     }
   }catch{ $("#llmBadge").textContent="API offline"; }
@@ -122,7 +122,7 @@ function renderSource(v){
   if(!shown.length){
     writeTitle("the sample");
     name.textContent="The sample is still indexing";
-    sub.textContent="It seeds itself on first start — a few minutes, once.";
+    sub.textContent="It seeds itself on first start. A few minutes, once.";
     return;
   }
 
@@ -193,7 +193,7 @@ const TRACE_BLURB={
   searching: "Two branches run at once: CLIP over the frames, and the transcript.",
   ranking:   "Ranked by RRF, merged into moments by timestamp, then re-judged by a cross-encoder.",
   reading:   "The winning frames and their transcript excerpts are pulled for the model.",
-  answering: "A vision model writes the answer from those moments — and cites them.",
+  answering: "A vision model writes the answer from those moments, and cites them.",
 };
 let STAGE_INFO={};
 
@@ -312,7 +312,7 @@ async function ask(){
     let html="";
     if(r.answer) html+=`<div class="prose-body fade-in">${renderMarkdown(r.answer)}</div>`;
     if(r.note) html+=`<p class="text-xs text-muted mt-3">${esc(r.note)}</p>`;
-    if(!r.answer && !CITES.length) html=`<p class="text-muted">No matching moment in ${esc(SAMPLE_NAME)} — try another question.</p>`;
+    if(!r.answer && !CITES.length) html=`<p class="text-muted">No matching moment in ${esc(SAMPLE_NAME)}. Try another question.</p>`;
     $("#article").innerHTML=html;
     if(CITES.length){
       $("#sources-wrap").classList.remove("hidden");

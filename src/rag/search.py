@@ -341,7 +341,8 @@ def ask(question: str, user_id: str, *, top_k: int | None = None,
     result: dict[str, Any] = {"question": question, "citations": citations}
 
     if not citations:
-        result.update(answer="No relevant moments were found. Try ingesting a video first.",
+        result.update(answer="I couldn't find anything relevant in your videos. "
+                             "Try adding a video first.",
                       llm_used=False, abstained=True)
         return result
 
@@ -350,7 +351,9 @@ def ask(question: str, user_id: str, *, top_k: int | None = None,
     visual_ok = r["best_visual"] >= CONFIDENCE_THRESHOLD
     text_ok = r["best_text"] >= TEXT_CONFIDENCE_THRESHOLD
     if CONFIDENCE_THRESHOLD and not visual_ok and not text_ok:
-        result.update(answer=ABSTAIN, llm_used=False, abstained=True)
+        # Hide the moment cards too — a "couldn't find it" reply sitting above a
+        # grid of moments reads as a contradiction (they look like results).
+        result.update(answer=ABSTAIN, citations=[], llm_used=False, abstained=True)
         return result
 
     cfg, source = resolve_llm(user_id)
@@ -378,9 +381,15 @@ def ask(question: str, user_id: str, *, top_k: int | None = None,
     # Bound the citation validator by what the model was actually SHOWN: after a
     # trim it only knows moments 1..len(moments), so a [5] from a 3-moment prompt
     # is an invention and gets stripped.
-    result["answer"] = _validate_citations(llm.answer(question, moments, cfg),
-                                           len(moments))
+    answer = _validate_citations(llm.answer(question, moments, cfg), len(moments))
+    result["answer"] = answer
     result["llm_used"] = True
     result["llm_source"] = source          # "user" = their own hosted model
     result["llm_model"] = cfg.model
+    # A refusal ("couldn't find it in your videos") cites no moment — a real
+    # answer always cites [n]. When nothing is cited, hide the cards so the reply
+    # doesn't sit above a grid of moments that look like results.
+    if not re.search(r"\[\d+\]", answer):
+        result["citations"] = []
+        result["abstained"] = True
     return result

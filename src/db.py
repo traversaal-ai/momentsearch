@@ -61,6 +61,13 @@ CREATE INDEX IF NOT EXISTS ms_videos_hash_idx   ON ms_videos (user_id, source_ha
 -- upload). Added as a migration so databases created before it get the column.
 ALTER TABLE ms_videos ADD COLUMN IF NOT EXISTS diarize BOOLEAN NOT NULL DEFAULT false;
 
+-- Non-fatal transcript outcome. A video can index visually while its transcript
+-- fails (no captions, IP block, ASR silence, embed error). This holds a
+-- human-readable note for that case so the card can tell the user it's
+-- visual-only and why — NULL when the transcript indexed fine. Added as a
+-- migration so pre-existing databases get the column.
+ALTER TABLE ms_videos ADD COLUMN IF NOT EXISTS transcript_note TEXT;
+
 -- Bring-your-own-model: a tenant's own answer model — any provider name from
 -- src/providers/registry.py, or their own OpenAI-compatible server via base_url.
 -- When a row exists the read path answers with THIS model instead of the
@@ -183,6 +190,17 @@ def set_progress(video_id: str, progress: float) -> None:
     with pool().connection() as conn:
         conn.execute("UPDATE ms_videos SET progress = %s, updated_at = now() WHERE id = %s",
                      (round(progress, 3), video_id))
+
+
+def set_transcript_note(video_id: str, note: str | None) -> None:
+    """Record (or clear, with None) why a video's transcript wasn't indexed.
+
+    Set by the transcript stage after the video is already 'indexed' visually, so
+    it's a standalone one-column update rather than part of set_status()."""
+    with pool().connection() as conn:
+        conn.execute(
+            "UPDATE ms_videos SET transcript_note = %s, updated_at = now() WHERE id = %s",
+            (note, video_id))
 
 
 def bump_attempts(video_id: str) -> int:
