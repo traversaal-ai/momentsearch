@@ -27,7 +27,7 @@ docker compose up --build
 # → http://localhost:8000
 ```
 
-`.env.local.example` is a **local, keyless preset** — storage, models, Qdrant and Postgres all run on your machine (`DATABASE_URL` and `QDRANT_URL` are covered by the `local-postgres` / `local-qdrant` compose profiles). The one thing to fill in is **Prefect** (`PREFECT_API_URL` + `PREFECT_API_KEY`, the ingest queue) — a free key, no card, from [app.prefect.cloud](https://app.prefect.cloud) → avatar → API Keys.
+`.env.local.example` keeps the whole stack **on your machine, keyless** — storage, models, Qdrant and Postgres all run locally (`DATABASE_URL` and `QDRANT_URL` are covered by the `local-postgres` / `local-qdrant` compose profiles). Two things to fill in: **Prefect** (`PREFECT_API_URL` + `PREFECT_API_KEY`, the ingest queue — free, no card, from [app.prefect.cloud](https://app.prefect.cloud) → avatar → API Keys), and your **OpenAI key** (`OPENAI_API_KEY`) for written, cited answers + upload transcription. Leave OpenAI blank and search still works — you get ranked, clickable moments, just no prose.
 
 **First run takes a few minutes** (the first `docker build` also downloads PyTorch). A one-shot `seed` step then downloads the CLIP model and indexes the sample video *before* `api`/`worker` start, so **`http://localhost:8000` won't answer until seeding finishes** — that's expected, not a hang. Watch progress with `docker compose logs -f`; **you'll know it's ready when the logs print:**
 

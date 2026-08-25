@@ -36,6 +36,10 @@ benchmark/
 # Internal presentations (not published)
 *.pptx
 
+# Blog draft + its diagram sources (not published)
+BLOG.md
+diagrams/
+
 # OS / editor
 .DS_Store
 .idea/
