@@ -88,19 +88,27 @@ createdb ms                                                    # macOS/Linux; Wi
 
 </details>
 
-**Now open a terminal** — **PowerShell** or **Git Bash** on Windows, **Terminal** on macOS, any shell on Linux — and `cd` to wherever you keep projects (`cd ~/code`, or `cd $HOME\Desktop` on Windows). Then paste these four lines one at a time:
+**Now open a terminal** — **PowerShell** or **Git Bash** on Windows, **Terminal** on macOS, any shell on Linux — and `cd` to wherever you keep projects (`cd ~/code`, or `cd $HOME\Desktop` on Windows). First, get the code and create your config:
 
 ```bash
 git clone https://github.com/traversaal-ai/momentsearch.git   # copy the code down (makes a momentsearch/ folder)
 cd momentsearch                                               # step into that folder — every command below runs from here
-cp .env.local.example .env                                    # local & keyless preset
-docker compose up --build                                     # build the image and start the stack
+cp .env.local.example .env                                    # create your config from the local, keyless preset
+```
+
+**Now open `.env` and add your keys _before_ you start anything** — the app won't index or answer without them. The stack itself stays **on your machine, keyless** (storage, models, Qdrant and Postgres all run locally — `DATABASE_URL` and `QDRANT_URL` come from the `local-postgres` / `local-qdrant` compose profiles). Two keys to fill in:
+
+- **Prefect** (`PREFECT_API_URL` + `PREFECT_API_KEY`) — the ingest queue. **Required — nothing indexes without it.** Free, no card: [app.prefect.cloud](https://app.prefect.cloud) → avatar → API Keys.
+- **OpenAI** (`OPENAI_API_KEY`) — for written, cited answers + upload transcription. OpenAI is the simplest default; see [MODELS.md](MODELS.md) to choose another. *Leave it blank and search still works* — you get ranked, clickable moments, just no prose.
+
+With your keys saved, build and start the stack:
+
+```bash
+docker compose up --build                                     # build the image and start everything
 # → http://localhost:8000
 ```
 
-Leave that last command **running** — it's the app; `Ctrl+C` stops it, and `docker compose up` (no `--build`) starts it again later.
-
-`.env.local.example` keeps the whole stack **on your machine, keyless** — storage, models, Qdrant and Postgres all run locally (`DATABASE_URL` and `QDRANT_URL` are covered by the `local-postgres` / `local-qdrant` compose profiles). Two things to fill in: **Prefect** (`PREFECT_API_URL` + `PREFECT_API_KEY`, the ingest queue — free, no card, from [app.prefect.cloud](https://app.prefect.cloud) → avatar → API Keys), and your **OpenAI key** (`OPENAI_API_KEY`) for written, cited answers + upload transcription (OpenAI is the simplest default — see [MODELS.md](MODELS.md) to choose another model/provider). Leave OpenAI blank and search still works — you get ranked, clickable moments, just no prose.
+Leave that command **running** — it's the app; `Ctrl+C` stops it, and `docker compose up` (no `--build`) starts it again later.
 
 **First run takes a few minutes** (the first `docker build` also downloads PyTorch). A one-shot `seed` step then downloads the CLIP model and indexes the sample video *before* `api`/`worker` start, so **`http://localhost:8000` won't answer until seeding finishes** — that's expected, not a hang. Watch progress with `docker compose logs -f`; **you'll know it's ready when the logs print:**
 
