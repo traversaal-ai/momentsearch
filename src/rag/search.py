@@ -388,8 +388,9 @@ def ask(question: str, user_id: str, *, top_k: int | None = None,
     result["llm_model"] = cfg.model
     # A refusal ("couldn't find it in your videos") cites no moment — a real
     # answer always cites [n]. When nothing is cited, hide the cards so the reply
-    # doesn't sit above a grid of moments that look like results.
-    if not re.search(r"\[\d+\]", answer):
+    # doesn't sit above a grid of moments that look like results. Use _CITE_RE
+    # (not a bare \[\d+\]) so a COMBINED cite like [2, 6] still counts.
+    if not _CITE_RE.search(answer):
         result["citations"] = []
         result["abstained"] = True
     return result
