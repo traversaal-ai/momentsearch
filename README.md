@@ -22,6 +22,12 @@
 </p>
 
 <p align="center">
+  <img width="880" alt="Starting on the landing page, opening an empty workspace, pasting a YouTube URL, watching the queued/fetch/frames/embed stages run, then asking a question and getting a cited answer above the matched moments" src="docs/media/demo-upload.gif">
+</p>
+
+<p align="center"><sub><b>Empty workspace → a cited answer.</b> Paste a link, watch it index, ask. Indexing is fast-forwarded; the rest runs at ~1.3–1.6× speed.</sub></p>
+
+<p align="center">
   <img width="880" alt="Typing “how does an LLM predict the next word?”, the six pipeline stages ticking over, then a cited answer streaming in above the matched moments" src="docs/media/demo-ask.gif">
 </p>
 
