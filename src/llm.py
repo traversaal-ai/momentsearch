@@ -14,11 +14,11 @@ import src.providers.llm directly.
 from __future__ import annotations
 
 from .providers.llm import (NVIDIA_BASE_URL, PROVIDERS, SYSTEM, LLMConfig,
-                            answer, describe, env_config, fit_local_context,
-                            from_row, is_local_runtime, is_provider,
-                            missing_requirement, ping, resolve)
+                            answer, complete, describe, env_config,
+                            fit_local_context, from_row, is_local_runtime,
+                            is_provider, missing_requirement, ping, resolve)
 
 __all__ = ["NVIDIA_BASE_URL", "PROVIDERS", "SYSTEM", "LLMConfig", "answer",
-           "describe", "env_config", "fit_local_context", "from_row",
+           "complete", "describe", "env_config", "fit_local_context", "from_row",
            "is_local_runtime", "is_provider", "missing_requirement", "ping",
            "resolve"]

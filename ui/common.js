@@ -100,6 +100,21 @@ function modTags(mods){
     ? '<span class="text-[9px] px-1 rounded bg-coral/15 text-coral2">seen</span>'
     : '<span class="text-[9px] px-1 rounded bg-[#cfe8d6] text-[#1f7a43]">said</span>').join(" ");
 }
+/* Multi-part questions (server: MULTI_QUERY). The server splits "what does A say,
+   and how does B respond?" into parts and searches each; every moment then says
+   which part(s) found it (Q1/Q2), and the answer lists the parts it searched as.
+   A single-part answer carries neither, so both render nothing. */
+function partTags(parts){
+  return (parts||[]).map(p=>
+    `<span class="text-[9px] px-1 rounded border border-line text-muted" title="found for part ${p} of your question">Q${p}</span>`).join(" ");
+}
+function partsLine(parts){
+  if(!parts || parts.length<2) return "";
+  return `<div class="text-[11.5px] text-muted mt-3 leading-relaxed">
+    <span class="text-[10px] uppercase tracking-wider font-semibold mr-1">Searched as</span>
+    ${parts.map((p,i)=>`<span class="inline-block mr-2"><span class="text-[9px] px-1 rounded border border-line text-muted mr-1">Q${i+1}</span>${esc(p)}</span>`).join("")}
+  </div>`;
+}
 /* Text-only moments have no frame; they're always YouTube, so fall back to the
    video's thumbnail rather than showing an empty box. */
 function thumbOf(c){
@@ -145,6 +160,7 @@ function momentCard(c, i){
         <span class="text-[10px] font-bold text-white bg-coral rounded px-1.5 py-0.5">${c.n}</span>
         <span class="text-[11px] text-muted">${esc(c.timestamp)}</span>
         ${modTags(c.modalities)}
+        ${partTags(c.parts)}
         ${rel}
       </div>
       <div class="text-[12px] font-600 leading-snug line-clamp-2">${esc(c.title||c.video_id)}</div>

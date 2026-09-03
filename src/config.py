@@ -511,6 +511,35 @@ VISUAL_STRONG = _float("VISUAL_STRONG", 0.45)
 # cosines run ~0.5-0.7 for real matches, so 0.65 reads as a clearly-strong hit.
 TEXT_STRONG = _float("TEXT_STRONG", 0.65)
 
+# --- Answer context, multi-part questions, per-moment pruning ----------------------
+# Seconds of transcript AROUND each retrieved moment that the answer model also
+# reads: the chunk before/after a transcript hit, the speech playing over a frame.
+# Measured from the matched chunk's edges, so 10s reaches both neighbours. The
+# model sees it; the UI card keeps showing the matched excerpt. 0 = off.
+CONTEXT_PAD_S = _float("CONTEXT_PAD_S", 10.0)
+# Multi-part questions ("what does A say, and how does B respond?"): one small LLM
+# call (same model/key as the answers) decides whether to split; each part is then
+# retrieved IN PARALLEL and the model answers every part from all the moments. The
+# split check runs alongside the normal retrieval, so a single-part question pays
+# no extra latency. Parts are capped; moments are shared out across them.
+MULTI_QUERY = _envbool("MULTI_QUERY", True)
+MULTI_QUERY_MAX_PARTS = _int("MULTI_QUERY_MAX_PARTS", 3)
+MULTI_QUERY_TOTAL_K = _int("MULTI_QUERY_TOTAL_K", 12)   # moments across all parts
+# Per-moment pruning (the gate above is per QUESTION; these judge each moment).
+# Frames: a frame-only moment is dropped when its CLIP score is under this share
+# of the best frame's. Text: transcript moments the reranker scored under this
+# 0-1 relevance are dropped (only when the reranker ran). A moment survives if
+# EITHER branch is good. BOTH DEFAULT OFF, on measurement (42-question set, 80
+# ground-truth moments): CLIP's text->image cosines are so compressed that every
+# top-20 frame sits within ~25% of the best, so a ratio up to 0.75 never fired;
+# and the default ms-marco MiniLM reranker gives ~0 to conversational ASR chunks
+# (median 0.001 for CORRECT moments), so a floor of even 0.01 cut correct
+# transcript moments and let frame junk fill their slots (51 -> 47 hits). The
+# ranking uses its ORDER, which is fine; its absolute value is not a quality
+# signal. Turn the floor on only with a calibrated reranker (e.g. Cohere).
+FRAME_SCORE_RATIO = _float("FRAME_SCORE_RATIO", 0.0)
+TEXT_RERANK_FLOOR = _float("TEXT_RERANK_FLOOR", 0.0)
+
 # --- Multimodal LLM (answer synthesis only — retrieval works without it) -----------
 # LLM_PROVIDER is a name from registry.LLM_PRESETS — openai, gemini, anthropic,
 # openrouter, xai (grok), groq, together, fireworks, mistral, nvidia,

@@ -185,6 +185,7 @@ const TRACE=[
   {id:"embedding", label:"Reading your question"},
   {id:"searching", label:"Searching screen + speech"},
   {id:"ranking",   label:"Ranking the moments"},
+  {id:"parts",     label:"Searching each part"},
   {id:"reading",   label:"Opening those moments"},
   {id:"answering", label:"Writing the answer"},
 ];
@@ -192,7 +193,8 @@ const TRACE_BLURB={
   embedding: "Your question is embedded into the same space as the video's frames.",
   searching: "Two branches run at once: CLIP over the frames, and the transcript.",
   ranking:   "Ranked by RRF, merged into moments by timestamp, then re-judged by a cross-encoder.",
-  reading:   "The winning frames and their transcript excerpts are pulled for the model.",
+  parts:     "A multi-part question is split and every part is searched in parallel. Single-part questions skip this.",
+  reading:   "The winning frames, their transcript excerpts and the speech around them are pulled for the model.",
   answering: "A vision model writes the answer from those moments, and cites them.",
 };
 let STAGE_INFO={};
@@ -311,6 +313,7 @@ async function ask(){
     CITES=r.citations||[];
     let html="";
     if(r.answer) html+=`<div class="prose-body fade-in">${renderMarkdown(r.answer)}</div>`;
+    if(r.parts && r.parts.length>1 && typeof partsLine==="function") html+=partsLine(r.parts);
     if(r.note) html+=`<p class="text-xs text-muted mt-3">${esc(r.note)}</p>`;
     if(!r.answer && !CITES.length) html=`<p class="text-muted">No matching moment in ${esc(SAMPLE_NAME)}. Try another question.</p>`;
     $("#article").innerHTML=html;

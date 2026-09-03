@@ -6,9 +6,18 @@ temporal near-duplicates, trim to TOP_K, and — Gate 1 — if even the best
 score is below CONFIDENCE_THRESHOLD, abstain WITHOUT calling the LLM. That
 one free check kills most hallucination risk. Generated answers get their
 [n] citations validated; invented references are stripped.
+
+Three refinements sit on that spine (all env-tunable, see config.py):
+  - per-moment pruning after the rerank (FRAME_SCORE_RATIO / TEXT_RERANK_FLOOR),
+    off by default — measured not to help with the default CLIP + MiniLM stack;
+  - the model also reads the speech AROUND each moment (CONTEXT_PAD_S);
+  - a multi-part question is split (query_split.py) and each part retrieved in
+    parallel — the split check runs alongside the plain retrieval, so a
+    single-part question pays no extra time.
 """
 from __future__ import annotations
 
+import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -16,7 +25,7 @@ from typing import Any
 from .. import config, db, llm, storage
 from ..config import (BRANCH_TOP_K, CONFIDENCE_THRESHOLD, CROSS_MODAL_BOOST,
                       FUSION_WINDOW_S, RRF_K, TEXT_CONFIDENCE_THRESHOLD, TOP_K)
-from . import vector_store
+from . import query_split, vector_store
 from .embeddings import embed_query, embed_text
 
 ABSTAIN = ("I couldn't find that in your videos — nothing indexed looks "
@@ -177,6 +186,40 @@ def _rerank(question: str, windows: list[dict]) -> list[dict]:
     return windows
 
 
+def _prune(windows: list[dict], best_visual: float) -> list[dict]:
+    """Per-moment quality floor — the gate in ask() is per QUESTION (on the two
+    branch bests) and lets a weak tail ride in behind one strong hit; this judges
+    each moment on its own, after the rerank, before the trim to TOP_K.
+
+    Frames: CLIP cosine isn't calibrated, so the rule is relative — a frame is
+    "good" at >= FRAME_SCORE_RATIO of the best frame's score. Text: the
+    cross-encoder's 0-1 relevance is calibrated, so an absolute TEXT_RERANK_FLOOR
+    (only for moments the reranker actually judged; with the reranker off, text
+    is never pruned). A moment stays if EITHER branch is good — a weak transcript
+    under a strong frame, or the reverse, is still evidence. Dropped moments free
+    their slots for the next-best, so this usually changes WHICH six show, not
+    how many; fewer than TOP_K only when the library has nothing better.
+
+    Both knobs default to 0 (off) — see config.py for the measurement: with the
+    default CLIP + MiniLM stack the ratio never fires and the floor removes
+    correct transcript moments. The machinery stays for other embedders/rerankers."""
+    ratio, floor = config.FRAME_SCORE_RATIO, config.TEXT_RERANK_FLOOR
+    if not ratio and not floor:
+        return windows
+    vis_floor = ratio * best_visual if ratio else 0.0
+
+    def frame_ok(w: dict) -> bool:
+        fr = w.get("frame")
+        return bool(fr) and fr.get("score", 0.0) >= vis_floor
+
+    def text_ok(w: dict) -> bool:
+        if not w.get("text"):
+            return False
+        return not floor or "rerank" not in w or w["rerank"] >= floor
+
+    return [w for w in windows if frame_ok(w) or text_ok(w)]
+
+
 def _noop_stage(stage: str, detail: str = "") -> None:
     """Default progress sink. Callers that want to show what the pipeline is
     doing (the UI's streaming ask) pass their own on_stage; everyone else pays
@@ -192,10 +235,12 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
     """Multimodal retrieve: query BOTH branches (CLIP frames + transcript text),
     fuse by RRF into time windows, and return numbered moment-citations.
 
-    Returns {citations, best_visual, best_text} — the two raw bests feed the
-    confidence gate (RRF scores are too small to threshold on). video_ids scopes
-    the search to chosen videos (UI select/unselect); include_samples keeps the
-    shared sample corpus searchable from any workspace."""
+    Returns {citations, best_visual, best_text, candidates} — the two raw bests
+    feed the confidence gate (RRF scores are too small to threshold on);
+    `candidates` is how many fused moments existed before pruning/trimming, so
+    an empty result can tell "nothing indexed" from "nothing good enough".
+    video_ids scopes the search to chosen videos (UI select/unselect);
+    include_samples keeps the shared sample corpus searchable from any workspace."""
     k = top_k or TOP_K
 
     # Visual branch — CLIP text→image.
@@ -219,7 +264,7 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
 
     fused = _fuse(vhits, thits)
     on_stage("ranking", f"{len(fused)} candidate moments")
-    windows = _rerank(question, fused)[:k]
+    windows = _prune(_rerank(question, fused), best_visual)[:k]
     videos = db.videos_by_ids(sorted({w["video_id"] for w in windows}))
 
     # A text-only moment has no matched frame; borrow the video's picture nearest
@@ -258,6 +303,11 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
             "source": (meta or {}).get("source"),
             "ms": ms,
             "timestamp": _seconds(ms),
+            # The matched span in seconds (a transcript chunk's extent; a frame
+            # is a point) — what CONTEXT_PAD_S pads around when the model reads.
+            "t_start": round(float(tx.get("t_start", w["t"])) if tx else ms / 1000.0, 2),
+            "t_end": round(float(tx.get("t_end", tx.get("t_start", w["t"])))
+                           if tx else ms / 1000.0, 2),
             "idx": idx,
             "thumbnail": _thumb_url(owner, vid, idx) if idx is not None else None,
             # Non-matched still shown for a text-only moment (kept separate from
@@ -271,7 +321,8 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
             "speaker": (tx or {}).get("speaker"),   # who said it (diarized), if any
             "modalities": sorted(w["modalities"]),
         })
-    return {"citations": citations, "best_visual": best_visual, "best_text": best_text}
+    return {"citations": citations, "best_visual": best_visual,
+            "best_text": best_text, "candidates": len(fused)}
 
 
 def _fallback_answer(citations: list[dict[str, Any]]) -> str:
@@ -298,25 +349,98 @@ def _validate_citations(answer: str, n_frames: int) -> str:
     return _CITE_RE.sub(fix, answer)
 
 
+def _transcript_chunks(owner: str, video_id: str) -> list[dict]:
+    """The video's stored timed transcript (`[{text,t_start,t_end,speaker?}]`,
+    written at ingest) — one GET, best-effort: a video with no transcript, or a
+    copy that predates transcript-to-storage, simply yields no context."""
+    try:
+        chunks = json.loads(storage.get_bytes(storage.transcript_key(owner, video_id)))
+        return chunks if isinstance(chunks, list) else []
+    except Exception:
+        return []
+
+
+def _context(chunks: list[dict], c: dict, pad: float) -> list[tuple[str, str]]:
+    """What was said around a moment, as (where, text) pairs for the prompt.
+
+    A matched transcript chunk already spans ~TRANSCRIPT_CHUNK_SECONDS, so the
+    pad reaches from the chunk's EDGES (t_start - pad, t_end + pad): padding only
+    around the anchor time would fetch the chunk before and miss the one after,
+    where an answer usually continues. A frame-only moment has no span, so it is
+    simply the speech within `pad` seconds either side of the frame — including
+    the chunk playing while it was on screen, which today's frame-only moment
+    never showed the model at all. The matched chunk itself is left out (it is
+    already the moment's transcript)."""
+    t0 = float(c.get("t_start", c["ms"] / 1000.0))
+    t1 = float(c.get("t_end", t0))
+    lo, hi = t0 - pad, t1 + pad
+    matched = c.get("transcript")
+    before: list[str] = []
+    during: list[str] = []
+    after: list[str] = []
+    for ch in chunks:
+        cs = float(ch.get("t_start", 0.0))
+        ce = float(ch.get("t_end", cs))
+        if ce <= lo or cs >= hi:
+            continue
+        text = (ch.get("text") or "").strip()
+        if not text or text == matched:
+            continue
+        if ch.get("speaker"):
+            text = f"{ch['speaker']}: {text}"
+        (before if ce <= t0 else after if cs >= t1 else during).append(text)
+    out: list[tuple[str, str]] = []
+    if before:
+        out.append(("said just before", " ".join(before)))
+    if during:
+        out.append(("said while this frame was on screen", " ".join(during)))
+    if after:
+        out.append(("said just after", " ".join(after)))
+    return out
+
+
 def _build_moments(user_id: str, citations: list[dict[str, Any]]) -> list[dict]:
     """Turn citations into what the LLM sees: each moment carries its frame
-    image (if any) and/or its transcript excerpt (if any), numbered to match."""
-    def frame_bytes(c):
+    image (if any), its transcript excerpt (if any) and — CONTEXT_PAD_S — the
+    speech around it, numbered to match.
+
+    Everything remote goes through ONE thread pool: a frame GET per moment plus
+    a transcript GET per distinct video, all at once, so the context adds no
+    round-trip to the clock."""
+    pad = config.CONTEXT_PAD_S
+
+    def owner_of(c: dict) -> str:
+        # c["owner"], not the asker: a shared sample's frames and transcript sit
+        # under the tenant that ingested it.
+        return c.get("owner") or user_id
+
+    def frame_bytes(c: dict):
         if c.get("idx") is None:
             return None
         try:
-            # c["owner"], not the asker: a shared sample's frames sit under the
-            # tenant that ingested it.
-            owner = c.get("owner") or user_id
-            return storage.get_bytes(storage.frame_key(owner, c["video_id"], c["idx"]))
+            return storage.get_bytes(storage.frame_key(owner_of(c), c["video_id"], c["idx"]))
         except Exception:
             return None
 
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        images = list(ex.map(frame_bytes, citations))
-    return [{"image": img, "transcript": c.get("transcript"),
-             "speaker": c.get("speaker"), "timestamp": c["timestamp"]}
-            for img, c in zip(images, citations)]
+    videos = sorted({(owner_of(c), c["video_id"]) for c in citations}) if pad > 0 else []
+    with ThreadPoolExecutor(max_workers=max(1, min(16, len(citations) + len(videos)))) as ex:
+        f_images = [ex.submit(frame_bytes, c) for c in citations]
+        f_chunks = {key: ex.submit(_transcript_chunks, *key) for key in videos}
+        images = [f.result() for f in f_images]
+        chunks = {key: f.result() for key, f in f_chunks.items()}
+
+    moments = []
+    for img, c in zip(images, citations):
+        m: dict[str, Any] = {"image": img, "transcript": c.get("transcript"),
+                             "speaker": c.get("speaker"), "timestamp": c["timestamp"]}
+        if c.get("parts"):                  # multi-part: which sub-question found it
+            m["parts"] = c["parts"]
+        if pad > 0:
+            ctx = _context(chunks.get((owner_of(c), c["video_id"]), []), c, pad)
+            if ctx:
+                m["context"] = ctx
+        moments.append(m)
+    return moments
 
 
 def resolve_llm(user_id: str) -> tuple[llm.LLMConfig | None, str]:
@@ -331,32 +455,42 @@ def resolve_llm(user_id: str) -> tuple[llm.LLMConfig | None, str]:
     return (cfg, "server") if cfg else (None, "none")
 
 
-def ask(question: str, user_id: str, *, top_k: int | None = None,
-        video_id: str | None = None,
-        video_ids: list[str] | None = None,
-        on_stage=_noop_stage) -> dict[str, Any]:
-    r = retrieve(question, user_id, top_k=top_k, video_id=video_id,
-                 video_ids=video_ids, on_stage=on_stage)
-    citations = r["citations"]
-    result: dict[str, Any] = {"question": question, "citations": citations}
+def _gate_ok(r: dict[str, Any]) -> bool:
+    """Gate 1 — confidence on the RAW per-branch bests (not the RRF score).
+    Passes when EITHER what's on screen or what's said looks relevant; abstain
+    only when neither does. Off when CONFIDENCE_THRESHOLD is 0."""
+    if not CONFIDENCE_THRESHOLD:
+        return True
+    return (r["best_visual"] >= CONFIDENCE_THRESHOLD
+            or r["best_text"] >= TEXT_CONFIDENCE_THRESHOLD)
 
-    if not citations:
-        result.update(answer="I couldn't find anything relevant in your videos. "
-                             "Try adding a video first.",
-                      llm_used=False, abstained=True)
-        return result
 
-    # Gate 1 — confidence on the RAW per-branch bests (not the RRF score).
-    # Abstain only if NEITHER what's on screen nor what's said looks relevant.
-    visual_ok = r["best_visual"] >= CONFIDENCE_THRESHOLD
-    text_ok = r["best_text"] >= TEXT_CONFIDENCE_THRESHOLD
-    if CONFIDENCE_THRESHOLD and not visual_ok and not text_ok:
-        # Hide the moment cards too — a "couldn't find it" reply sitting above a
-        # grid of moments reads as a contradiction (they look like results).
-        result.update(answer=ABSTAIN, citations=[], llm_used=False, abstained=True)
-        return result
+def _merge_parts(results: list[dict[str, Any]], found: list[int]) -> list[dict]:
+    """One citation list out of per-part retrievals: grouped by part, deduped by
+    (video, FUSION_WINDOW_S) so a moment two parts both found appears once and
+    is tagged with both, then renumbered 1..N so the [n] the model cites is the
+    card the user sees."""
+    win_ms = FUSION_WINDOW_S * 1000
+    out: list[dict] = []
+    for pi in found:
+        for c in results[pi]["citations"]:
+            dup = next((o for o in out if o["video_id"] == c["video_id"]
+                        and abs(o["ms"] - c["ms"]) <= win_ms), None)
+            if dup is not None:
+                if pi + 1 not in dup["parts"]:
+                    dup["parts"].append(pi + 1)
+                continue
+            out.append({**c, "parts": [pi + 1]})
+    for i, c in enumerate(out, 1):
+        c["n"] = i
+    return out
 
-    cfg, source = resolve_llm(user_id)
+
+def _answer(result: dict[str, Any], user_id: str, cfg: llm.LLMConfig | None,
+            source: str, on_stage, opts: dict | None = None) -> dict[str, Any]:
+    """The shared tail of ask(): the retrieved moments passed the gate — read
+    them, call the model, validate what it cited."""
+    citations = result["citations"]
     if cfg is None:
         # No generative model — summarize the best matches instead of inventing.
         result.update(answer=_fallback_answer(citations), llm_used=False,
@@ -365,8 +499,9 @@ def ask(question: str, user_id: str, *, top_k: int | None = None,
                             "on the server, for a synthesized, grounded answer."))
         return result
 
-    # Pulling the matched frames out of object storage is its own wait (one GCS
-    # GET per moment), so it gets its own stage rather than hiding inside "answering".
+    # Pulling the matched frames (and the transcript around each moment) out of
+    # object storage is its own wait, so it gets its own stage rather than hiding
+    # inside "answering".
     on_stage("reading", f"{len(citations)} moment{'' if len(citations) == 1 else 's'}")
     moments = _build_moments(user_id, citations)
     # A local runtime (Ollama & co) serves a 4096-token window by default, which a
@@ -381,7 +516,8 @@ def ask(question: str, user_id: str, *, top_k: int | None = None,
     # Bound the citation validator by what the model was actually SHOWN: after a
     # trim it only knows moments 1..len(moments), so a [5] from a 3-moment prompt
     # is an invention and gets stripped.
-    answer = _validate_citations(llm.answer(question, moments, cfg), len(moments))
+    answer = _validate_citations(
+        llm.answer(result["question"], moments, cfg, opts=opts), len(moments))
     result["answer"] = answer
     result["llm_used"] = True
     result["llm_source"] = source          # "user" = their own hosted model
@@ -394,3 +530,78 @@ def ask(question: str, user_id: str, *, top_k: int | None = None,
         result["citations"] = []
         result["abstained"] = True
     return result
+
+
+def _ask_multi(question: str, parts: list[str], user_id: str,
+               cfg: llm.LLMConfig, source: str, *, top_k: int | None,
+               on_stage, **scope) -> dict[str, Any]:
+    """A multi-part question: retrieve every part IN PARALLEL, gate each on its
+    own, merge, and answer the ORIGINAL question once from all the moments.
+
+    Per-part k is MULTI_QUERY_TOTAL_K shared out (6+6, or 4+4+4), so the model
+    reads about as many moments as one deep single retrieval. The sub-retrievals
+    report no stages (they would interleave); one stage names the parts, which
+    is also what the UI shows the user as "searched as"."""
+    n = len(parts)
+    per_k = top_k or max(3, config.MULTI_QUERY_TOTAL_K // n)
+    on_stage("parts", f"{n} parts · " + " · ".join(parts))
+    with ThreadPoolExecutor(max_workers=n) as ex:
+        results = list(ex.map(
+            lambda p: retrieve(p, user_id, top_k=per_k, on_stage=_noop_stage, **scope),
+            parts))
+    found = [i for i, r in enumerate(results) if r["citations"] and _gate_ok(r)]
+    missing = [i for i in range(n) if i not in found]
+    result: dict[str, Any] = {"question": question, "parts": parts}
+    if not found:
+        result.update(answer=ABSTAIN, citations=[], llm_used=False, abstained=True)
+        return result
+    result["citations"] = _merge_parts(results, found)
+    return _answer(result, user_id, cfg, source, on_stage,
+                   opts={"parts": parts, "missing": missing})
+
+
+def ask(question: str, user_id: str, *, top_k: int | None = None,
+        video_id: str | None = None,
+        video_ids: list[str] | None = None,
+        on_stage=_noop_stage) -> dict[str, Any]:
+    scope = {"video_id": video_id, "video_ids": video_ids}
+
+    # Retrieval starts FIRST, on a worker; everything else this path needs up
+    # front overlaps it instead of preceding it. The model lookup is a DB
+    # round-trip (~0.5s to a hosted Postgres) and the multi-part check is an LLM
+    # round-trip (~1-2s) — both used to sit on the clock, now both are hidden
+    # behind the ~2s retrieval. A single-part question (most of them) pays
+    # nothing extra; a multi-part one only wastes the plain retrieval it would
+    # have thrown away anyway.
+    parts = [question]
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        f_ret = ex.submit(retrieve, question, user_id, top_k=top_k,
+                          on_stage=on_stage, **scope)
+        cfg, source = resolve_llm(user_id)
+        f_split = (ex.submit(query_split.split, question, cfg)
+                   if config.MULTI_QUERY and cfg is not None else None)
+        r = f_ret.result()
+        if f_split is not None:
+            if not f_split.done():
+                on_stage("splitting", "checking whether the question has several parts")
+            parts = f_split.result()
+    if len(parts) > 1:
+        return _ask_multi(question, parts, user_id, cfg, source,
+                          top_k=top_k, on_stage=on_stage, **scope)
+
+    citations = r["citations"]
+    result: dict[str, Any] = {"question": question, "citations": citations}
+    if not citations:
+        # An empty library and "every candidate was too weak to show" are
+        # different situations and get different replies.
+        result.update(answer=(ABSTAIN if r.get("candidates") else
+                              "I couldn't find anything relevant in your videos. "
+                              "Try adding a video first."),
+                      llm_used=False, abstained=True)
+        return result
+    if not _gate_ok(r):
+        # Hide the moment cards too — a "couldn't find it" reply sitting above a
+        # grid of moments reads as a contradiction (they look like results).
+        result.update(answer=ABSTAIN, citations=[], llm_used=False, abstained=True)
+        return result
+    return _answer(result, user_id, cfg, source, on_stage)

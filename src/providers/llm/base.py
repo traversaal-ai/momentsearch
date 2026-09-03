@@ -26,7 +26,9 @@ SYSTEM = (
     "video FRAME (what was shown on screen) and/or a TRANSCRIPT excerpt (what was "
     "said out loud). Use BOTH kinds of evidence: for a question about what someone "
     "SAID or talked about, read the transcript text; for a question about what is "
-    "SHOWN, read the frame.\n"
+    "SHOWN, read the frame. A moment may also carry CONTEXT — what was said just "
+    "before/after the matched excerpt, or while a frame was on screen. Treat context "
+    "as part of that moment: use it, and cite the same [n].\n"
     "Rules:\n"
     "1. Read the question carefully and answer exactly what is asked. Start with a "
     "one-line direct answer, then explain in short paragraphs — ONE paragraph per "
@@ -65,7 +67,14 @@ SYSTEM = (
     "that moment's point to that exact person by name. NEVER invent a name or write "
     "a placeholder like \"Unnamed Speaker\"; don't attribute untagged moments to "
     "anyone. If (and only if) the instructions below the question ask for a "
-    "\"Who said what\" table, add it as the very last thing in your answer."
+    "\"Who said what\" table, add it as the very last thing in your answer.\n"
+    "7. ANSWER COMPLETELY, AND USE THE FACTS THAT ARE THERE. Address EVERY part of "
+    "the question — a multi-part question needs each part answered, each with its "
+    "own citation. And do not leave specifics on the table: when a moment's "
+    "transcript or frame holds an exact detail the question asks for — a number, "
+    "name, definition, step, quote or example — state it explicitly and cite it. "
+    "A vague or half answer while the precise fact is sitting right there in a "
+    "moment is a failure, even if what you did say is correct."
 )
 
 
@@ -154,7 +163,11 @@ def named_speakers(moments: list[dict]) -> list[str]:
     return out
 
 
-def intro(question: str, moments: list[dict]) -> str:
+def intro(question: str, moments: list[dict], parts: list[str] | None = None,
+          missing: list[int] | None = None) -> str:
+    """The user turn's preamble. `parts`/`missing` come from the multi-part path
+    (src/rag/query_split.py): the sub-questions the moments were retrieved for,
+    and the indexes of any part that found nothing worth showing."""
     n = len(moments)
     text = (
         f"QUESTION: {question}\n\n"
@@ -166,6 +179,20 @@ def intro(question: str, moments: list[dict]) -> str:
         "sentence that you couldn't find it and STOP; do NOT summarize the video "
         "instead."
     )
+    if parts and len(parts) > 1:
+        listed = "\n".join(f"  {i}) {p}" for i, p in enumerate(parts, 1))
+        text += (
+            f"\n\nThe question has {len(parts)} parts:\n{listed}\n"
+            "Each moment below says which part(s) it was retrieved for. Answer EVERY "
+            "part, in order, one short paragraph each with its own citations; a "
+            "moment retrieved for one part may still support another."
+        )
+        gaps = "; ".join(f"{i + 1}) {parts[i]}" for i in (missing or []) if i < len(parts))
+        if gaps:
+            text += (
+                f"\nNo matching moments were found for: {gaps}. For each of those, "
+                "write ONE sentence saying the videos don't cover it — do not guess."
+            )
     # The "Who said what" table is decided HERE (deterministically), not left to
     # the model: add the directive only when 2+ real names actually appear.
     names = named_speakers(moments)
@@ -186,13 +213,20 @@ def intro(question: str, moments: list[dict]) -> str:
 
 
 def label(i: int, m: dict) -> str:
-    line = f"[{i}] @ {m.get('timestamp', '')}"
+    line = f"[{i}]"
+    if m.get("parts"):     # multi-part question: which sub-question found it
+        line += " (for part " + "/".join(str(p) for p in m["parts"]) + ")"
+    line += f" @ {m.get('timestamp', '')}"
     if m.get("speaker"):
         line += f' speaker: {m["speaker"]}'
     if m.get("transcript"):
         line += f' transcript: "{m["transcript"]}"'
     if m.get("image") is None:
         line += " (transcript only, no frame)"
+    # CONTEXT_PAD_S: the speech around the moment — indented under [i] so it reads
+    # as part of this moment, not as a new one.
+    for where, text in m.get("context") or []:
+        line += f'\n    {where}: "{text}"'
     return line
 
 
@@ -269,6 +303,8 @@ def fit_local_context(cfg: LLMConfig,
         text = m.get("transcript")
         if text and chars > 0 and len(text) > chars:
             m["transcript"] = text[:chars].rstrip() + "…"
+        if chars > 0:
+            m.pop("context", None)   # the surrounding speech is the first thing to go
         out.append(m)
 
     # Nothing actually changed (few moments, already-small frames) -> no note.

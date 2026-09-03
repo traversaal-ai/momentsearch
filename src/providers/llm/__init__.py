@@ -34,8 +34,8 @@ from .base import (NVIDIA_BASE_URL, SYSTEM, LLMConfig, fit_local_context,
 PROVIDERS: tuple[str, ...] = LLM_PROVIDERS
 
 __all__ = ["PROVIDERS", "SYSTEM", "NVIDIA_BASE_URL", "LLMConfig", "answer",
-           "ping", "env_config", "from_row", "describe", "is_provider",
-           "missing_requirement", "resolve", "fit_local_context",
+           "complete", "ping", "env_config", "from_row", "describe",
+           "is_provider", "missing_requirement", "resolve", "fit_local_context",
            "is_local_runtime"]
 
 
@@ -75,15 +75,15 @@ def describe(cfg: LLMConfig) -> dict:
             "problem": missing_requirement(cfg)}
 
 
-def answer(question: str, moments: list[dict], cfg: LLMConfig) -> str:
-    """Synthesize a cited answer from retrieved moments with `cfg`'s model.
-
-    moments: [{"image": bytes|None, "transcript": str|None, "timestamp": str}]
-    — each may carry a frame, a transcript excerpt, or both."""
+def _ready(cfg: LLMConfig) -> LLMConfig:
     cfg = resolve(cfg)
     problem = missing_requirement(cfg)
     if problem:
         raise RuntimeError(problem)
+    return cfg
+
+
+def _adapter(cfg: LLMConfig):
     kind = llm_preset(cfg.provider).kind
     if kind == "anthropic":
         from . import anthropic as adapter
@@ -91,13 +91,43 @@ def answer(question: str, moments: list[dict], cfg: LLMConfig) -> str:
         from . import gemini as adapter
     else:  # openai + azure share the Chat Completions adapter
         from . import openai_compat as adapter
+    return adapter
+
+
+def _sdk_error(cfg: LLMConfig, exc: ImportError) -> RuntimeError:
+    # A missing optional SDK, not a model failure — name the fix.
+    sdk = llm_preset(cfg.provider).sdk
+    return RuntimeError(f"{llm_preset(cfg.provider).label} needs the '{sdk}' package: "
+                        f"pip install {sdk} ({exc})")
+
+
+def answer(question: str, moments: list[dict], cfg: LLMConfig,
+           opts: dict | None = None) -> str:
+    """Synthesize a cited answer from retrieved moments with `cfg`'s model.
+
+    moments: [{"image": bytes|None, "transcript": str|None, "timestamp": str,
+               "speaker"?, "context"?, "parts"?}]
+    — each may carry a frame, a transcript excerpt, or both. `opts` are extra
+    keyword arguments for the prompt preamble (base.intro): the multi-part path
+    passes the sub-questions and which of them found nothing."""
+    cfg = _ready(cfg)
     try:
-        return adapter.answer(cfg, question, moments)
-    except ImportError as exc:  # a missing optional SDK, not a model failure
-        sdk = llm_preset(cfg.provider).sdk
-        raise RuntimeError(
-            f"{llm_preset(cfg.provider).label} needs the '{sdk}' package: "
-            f"pip install {sdk} ({exc})") from exc
+        return _adapter(cfg).answer(cfg, question, moments, opts or {})
+    except ImportError as exc:
+        raise _sdk_error(cfg, exc) from exc
+
+
+def complete(cfg: LLMConfig, system: str, user: str, max_tokens: int = 1500) -> str:
+    """Plain text in, plain text out, on the same model and key as the answers.
+    For the small helper calls around an answer — the multi-part question check
+    (src/rag/query_split.py) — so a second provider is never needed. The cap is
+    generous on purpose: it is a ceiling, not a spend, and a reasoning model
+    needs the room to think before its short reply."""
+    cfg = _ready(cfg)
+    try:
+        return _adapter(cfg).complete(cfg, system, user, max_tokens)
+    except ImportError as exc:
+        raise _sdk_error(cfg, exc) from exc
 
 
 def ping(cfg: LLMConfig) -> str:

@@ -1,8 +1,31 @@
-# MomentSearch
+<h1 align="center">MomentSearch</h1>
 
-**Ask a question about your videos, get the exact moment back — matched on what's _seen_ on screen AND what's _said_ in the transcript.**
+<p align="center">
+  <b>Ask a question about your videos, get the exact moment back —<br>
+  matched on what's <i>seen</i> on screen AND what's <i>said</i> in the transcript.</b>
+</p>
 
-🌐 **Test the app at:** [momentsearch.traversaal.ai](https://momentsearch.traversaal.ai/) · Apache 2.0
+<p align="center">
+  <a href="https://momentsearch.traversaal.ai/"><img alt="Live demo" src="https://img.shields.io/badge/live%20demo-momentsearch.traversaal.ai-E76F51?style=flat-square"></a>
+  <img alt="License Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-264653?style=flat-square">
+  <img alt="Python 3.11" src="https://img.shields.io/badge/python-3.11-2A9D8F?style=flat-square&logo=python&logoColor=white">
+  <img alt="Runs with docker compose up" src="https://img.shields.io/badge/run-docker%20compose%20up-2496ED?style=flat-square&logo=docker&logoColor=white">
+</p>
+
+<p align="center">
+  <a href="#setup">Setup</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="MODELS.md">Models</a> ·
+  <a href="API.md">API</a> ·
+  <a href="DEPLOYMENT.md">Deployment</a>
+</p>
+
+<p align="center">
+  <img width="880" alt="Typing “how does an LLM predict the next word?”, the six pipeline stages ticking over, then a cited answer streaming in above the matched moments" src="docs/media/demo-ask.gif">
+</p>
+
+<p align="center"><sub><b>One question → both branches searched → a cited answer.</b> Recorded on the pre-indexed sample, ~1.4× speed.</sub></p>
 
 Upload videos or paste YouTube URLs. Background workers sample keyframes, dedup, embed and index them in [Qdrant](https://qdrant.tech). Ask a question and MomentSearch retrieves the best-matching moments, then has a vision LLM read those frames and write a cited answer — or abstain when the evidence isn't there. It's **visual-first and multimodal**: the frame branch searches what's on screen, the transcript branch searches what's said, and the two are fused into one ranked set of moments.
 
@@ -17,12 +40,28 @@ Upload videos or paste YouTube URLs. Background workers sample keyframes, dedup,
 
 ---
 
+# Every claim is a clickable moment
+
+<p align="center">
+  <img width="880" alt="Scrolling the cited moments grid — each card shows the matched keyframe, its timestamp, a match score and seen/said badges — then opening “How this answer was built” to reveal per-stage timings" src="docs/media/demo-moments.gif">
+</p>
+
+Every citation in the answer is a **moment**, and every moment carries its receipts:
+
+- the **keyframe** it matched on and the **timestamp** it came from — click to play the video at that exact second, with the transcript scrolling in sync;
+- **`seen` / `said` badges** and a **match score**, so you can tell whether the evidence was on screen, in the speech, or both;
+- **"How this answer was built"** expands into what each stage actually did — two branches searched in parallel, candidates fused and reranked, the frames the model was allowed to read, and how long each took.
+
+---
+
 # Setup
 
-**Never used Docker or Postgres? Start here.** **Docker** is the only thing you need to install — Postgres, Qdrant, the CLIP model and the app itself all come up *inside* Docker.
+**Never used Docker or Postgres? Start here.** **Docker** is the only thing you need to install — Postgres, Qdrant, the CLIP model and the app itself all come up *inside* Docker. Five steps, start to finish.
+
+## Step 1 — Install Docker
 
 <details>
-<summary><b>🐳 Install Docker — required — click for steps</b></summary>
+<summary><b>🐳 How to install Docker — click for steps</b></summary>
 
 Docker runs the whole stack (app, ingest worker, Postgres, Qdrant) as containers, so nothing gets installed on your machine and nothing to uninstall later. Install **Docker Desktop** — it includes the `docker compose` command this README uses.
 
@@ -88,7 +127,9 @@ createdb ms                                                    # macOS/Linux; Wi
 
 </details>
 
-**Now open a terminal** — **PowerShell** or **Git Bash** on Windows, **Terminal** on macOS, any shell on Linux — and `cd` to wherever you keep projects (`cd ~/code`, or `cd $HOME\Desktop` on Windows). First, get the code and create your config:
+## Step 2 — Get the code
+
+**Open a terminal** — **PowerShell** or **Git Bash** on Windows, **Terminal** on macOS, any shell on Linux — and `cd` to wherever you keep projects (`cd ~/code`, or `cd $HOME\Desktop` on Windows). Then:
 
 ```bash
 git clone https://github.com/traversaal-ai/momentsearch.git   # copy the code down (makes a momentsearch/ folder)
@@ -96,12 +137,14 @@ cd momentsearch                                               # step into that f
 cp .env.local.example .env                                    # create your config from the local, keyless preset
 ```
 
-**Now open `.env` and add your keys _before_ you start anything** — the app won't index or answer without them. The stack itself stays **on your machine, keyless** (storage, models, Qdrant and Postgres all run locally — `DATABASE_URL` and `QDRANT_URL` come from the `local-postgres` / `local-qdrant` compose profiles). Two keys to fill in:
+## Step 3 — Add your keys to `.env`
+
+**Open `.env` and add your keys _before_ you start anything** — the app won't index or answer without them. The stack itself stays **on your machine, keyless** (storage, models, Qdrant and Postgres all run locally — `DATABASE_URL` and `QDRANT_URL` come from the `local-postgres` / `local-qdrant` compose profiles). Two keys to fill in:
 
 - **Prefect** (`PREFECT_API_URL` + `PREFECT_API_KEY`) — the ingest queue. **Required — nothing indexes without it.** Free, no card: [app.prefect.cloud](https://app.prefect.cloud) → avatar → API Keys.
 - **OpenAI** (`OPENAI_API_KEY`) — for written, cited answers + upload transcription. OpenAI is the simplest default; see [MODELS.md](MODELS.md) to choose another. *Leave it blank and search still works* — you get ranked, clickable moments, just no prose.
 
-With your keys saved, build and start the stack:
+## Step 4 — Start the stack
 
 ```bash
 docker compose up --build                                     # build the image and start everything
@@ -109,6 +152,8 @@ docker compose up --build                                     # build the image 
 ```
 
 Leave that command **running** — it's the app; `Ctrl+C` stops it, and `docker compose up` (no `--build`) starts it again later.
+
+## Step 5 — Wait for the "UP" banner, then open the app
 
 **First run takes a few minutes** (the first `docker build` also downloads PyTorch). A one-shot `seed` step then downloads the CLIP model and indexes the sample video *before* `api`/`worker` start, so **`http://localhost:8000` won't answer until seeding finishes** — that's expected, not a hang. Watch progress with `docker compose logs -f`; **you'll know it's ready when the logs print:**
 
@@ -118,7 +163,7 @@ Leave that command **running** — it's the app; `Ctrl+C` stops it, and `docker 
 ================================================================
 ```
 
-Later runs find the sample already indexed and start in seconds. No LLM key is fine — retrieval still returns ranked, clickable moments (the UI badge reads "No LLM — moments only"); add `LLM_PROVIDER` + a key when you want prose.
+Then open **http://localhost:8000**. Later runs find the sample already indexed and start in seconds. No LLM key is fine — retrieval still returns ranked, clickable moments (the UI badge reads "No LLM — moments only"); add `LLM_PROVIDER` + a key when you want prose.
 
 ## Without Docker
 
@@ -160,7 +205,7 @@ Copy `.env.example` (the full, inline-documented reference) and set what you nee
 | `ASR_PROVIDER` | speech-to-text for uploaded videos (default `openai` / Whisper). |
 | `GEMINI_API_KEY` | required for speaker recognition ("who said what"). |
 
-**Feature flags:** `ENABLE_TRANSCRIPT` (the transcript branch), `ENABLE_RERANK` (reranker), `DIARIZE_ENABLED` (speaker recognition master switch), `SEED_SAMPLE_VIDEOS` (index the sample talk on startup).
+**Feature flags:** `ENABLE_TRANSCRIPT` (the transcript branch), `ENABLE_RERANK` (reranker), `MULTI_QUERY` (split a multi-part question and search each part in parallel), `DIARIZE_ENABLED` (speaker recognition master switch), `SEED_SAMPLE_VIDEOS` (index the sample talk on startup).
 
 ### YouTube ingest
 

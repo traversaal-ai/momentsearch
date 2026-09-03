@@ -498,6 +498,8 @@ const STAGE_WORDS={
   embedding: "Understanding your question",
   searching: "Searching what's on screen and what's said",
   ranking:   "Picking the strongest moments",
+  splitting: "Checking whether your question has several parts",
+  parts:     "Searching each part in parallel",
   reading:   "Opening those moments",
   answering: "Writing the answer with citations",
 };
@@ -637,11 +639,15 @@ function renderAnswer(){
   if(!SHOWN){ clearAnswer(); return; }
   document.body.dataset.ans="1";
   $("#askHead").classList.add("hidden");
-  const m=SHOWN.message, cites=m.citations||[], note=(m.meta||{}).note;
+  const m=SHOWN.message, cites=m.citations||[], note=(m.meta||{}).note, parts=(m.meta||{}).parts||[];
+  // typeof guard: a cached older common.js has no partsLine, and the answer must
+  // still render without the "searched as" line.
+  const searched = (parts.length>1 && typeof partsLine==="function") ? partsLine(parts) : "";
   $("#answer").innerHTML=`
     <div class="ans max-w-3xl mx-auto pt-2">
       ${askedBlock(SHOWN.q)}
       <div class="prose-body text-[15px]">${renderMarkdown(m.content)}</div>
+      ${searched}
       ${note?`<p class="text-[11px] text-muted mt-2">${esc(note)}</p>`:""}
       ${cites.length?`
         <div class="text-[11px] uppercase tracking-wider text-muted font-semibold mt-6 mb-2">Moments</div>

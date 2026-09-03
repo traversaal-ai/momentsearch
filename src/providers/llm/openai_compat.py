@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import base64
 import os
+import threading
+from dataclasses import replace
 
 from .base import SYSTEM, LLMConfig, downscale, intro, label
 
@@ -25,8 +27,29 @@ _OPENROUTER_HEADERS = {
     "X-Title": "MomentSearch",
 }
 
+# One client per distinct (provider, key, endpoint), kept for the process. A
+# fresh client per call meant a fresh TLS handshake per call, and an answer now
+# makes two calls (the multi-part check, then the answer) — reusing the client's
+# connection pool takes a few hundred ms off each. The SDK client is thread-safe.
+# Bounded so a long-lived server with many per-tenant configs can't grow it forever.
+_clients: dict[tuple, object] = {}
+_clients_lock = threading.Lock()
+_MAX_CLIENTS = 32
+
 
 def _client(cfg: LLMConfig):
+    key = (cfg.kind, cfg.provider, cfg.api_key, cfg.base_url or "",
+           os.getenv("AZURE_OPENAI_ENDPOINT", ""), os.getenv("AZURE_OPENAI_API_VERSION", ""))
+    with _clients_lock:
+        client = _clients.get(key)
+        if client is None:
+            if len(_clients) >= _MAX_CLIENTS:
+                _clients.clear()
+            client = _clients[key] = _new_client(cfg)
+    return client
+
+
+def _new_client(cfg: LLMConfig):
     if cfg.kind == "azure":
         from openai import AzureOpenAI
 
@@ -46,10 +69,10 @@ def _client(cfg: LLMConfig):
     )
 
 
-def _content(question: str, moments: list[dict]) -> list[dict]:
+def _content(question: str, moments: list[dict], opts: dict) -> list[dict]:
     """Interleave the numbered labels with their frames, in moment order — the
     model has to know which image is [3]."""
-    content: list[dict] = [{"type": "text", "text": intro(question, moments)}]
+    content: list[dict] = [{"type": "text", "text": intro(question, moments, **opts)}]
     for i, m in enumerate(moments, 1):
         content.append({"type": "text", "text": label(i, m)})
         if m.get("image"):
@@ -80,9 +103,20 @@ def _create(client, cfg: LLMConfig, messages: list[dict]):
     return client.chat.completions.create(**kwargs)
 
 
-def answer(cfg: LLMConfig, question: str, moments: list[dict]) -> str:
+def answer(cfg: LLMConfig, question: str, moments: list[dict],
+           opts: dict | None = None) -> str:
     resp = _create(_client(cfg), cfg, [
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": _content(question, moments)},
+        {"role": "user", "content": _content(question, moments, opts or {})},
+    ])
+    return (resp.choices[0].message.content or "").strip()
+
+
+def complete(cfg: LLMConfig, system: str, user: str, max_tokens: int = 1500) -> str:
+    """Plain text in, plain text out — for the small helper calls (the multi-part
+    question check) that share the answer model's provider and key."""
+    resp = _create(_client(cfg), replace(cfg, max_tokens=max_tokens), [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
     ])
     return (resp.choices[0].message.content or "").strip()
