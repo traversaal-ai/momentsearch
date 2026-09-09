@@ -80,31 +80,21 @@ def fetch_transcript(url: str, video_id: str) -> list[dict]:
 
 
 def get_youtube_cues(url: str, video_id: str) -> list[dict]:
-    """Pick the transcript SOURCE for a YouTube video per TRANSCRIPT_PROVIDER.
+    """Pick the transcript SOURCE for a YouTube video.
 
-      supadata -> Supadata only.
-      youtube  -> yt-dlp captions only (cookies/proxy, the original path).
-      auto     -> Supadata if SUPADATA_API_KEY is set (falling back to yt-dlp on
-                  an empty result or error), else yt-dlp captions.
-
-    Both sources return the same [{text,t_start,t_end}] cues, so everything
-    downstream is identical. See src/config.py TRANSCRIPT_PROVIDER."""
-    provider = config.TRANSCRIPT_PROVIDER
-
-    if provider == "supadata":
-        from .supadata import fetch_transcript_supadata
-        return fetch_transcript_supadata(url, video_id)
-
-    if provider == "auto" and config.SUPADATA_API_KEY:
-        from .supadata import fetch_transcript_supadata
-        cues = fetch_transcript_supadata(url, video_id)
+    SocialKit (when SOCIALKIT_API_KEY is set) returns captions from its own
+    servers, sidestepping the by-IP block; on an empty result or error it falls
+    back to yt-dlp captions (cookies/proxy). With no key it's yt-dlp only. Both
+    sources return the same [{text,t_start,t_end}] cues, so everything
+    downstream is identical. See src/config.py SOCIALKIT_API_KEY."""
+    if config.SOCIALKIT_API_KEY:
+        from .socialkit import fetch_transcript_socialkit
+        cues = fetch_transcript_socialkit(url, video_id)
         if cues:
             return cues
-        print(f"[transcript] {video_id}: Supadata returned nothing — "
+        print(f"[transcript] {video_id}: SocialKit returned nothing — "
               "falling back to yt-dlp captions")
-        return fetch_transcript(url, video_id)
 
-    # provider == "youtube", or auto with no Supadata key configured.
     return fetch_transcript(url, video_id)
 
 

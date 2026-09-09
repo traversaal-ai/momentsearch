@@ -72,6 +72,24 @@ function saveOff(){
   try{ localStorage.setItem(OFF_KEY, JSON.stringify([...OFF])); }catch{}
 }
 
+/* ---------- speaker-recognition preference ----------
+   Sticky per browser, like the excluded-video scope above. It describes the
+   video you add NEXT, so it has to survive a reload: otherwise you set it,
+   come back, and quietly add the next video with the wrong setting. It is a
+   user preference and NOT a library setting — restoring it never re-indexes
+   anything, and never touches a video that is already queued or indexed. */
+const DIA_KEY="ms_speaker_recognition";
+function loadDiarizePref(){
+  const chk=$("#diarizeChk");
+  if(!chk || chk.disabled) return;          // no key -> stays off, nothing to restore
+  try{ chk.checked = localStorage.getItem(DIA_KEY)==="1"; }catch{}
+}
+function saveDiarizePref(){
+  const chk=$("#diarizeChk");
+  if(!chk) return;
+  try{ localStorage.setItem(DIA_KEY, chk.checked?"1":"0"); }catch{}
+}
+
 /* ---------- the upload size cap ----------
    MAX_UPLOAD_MB on the server (2048 by default ≈ a 90-minute video at 720p).
    The server enforces it three times — presign, direct upload, and register's
@@ -91,7 +109,7 @@ function limitText(){
 const overLimit = bytes => bytes > MAXMB*1024*1024;
 const asMB = bytes => Math.round(bytes/(1024*1024)).toLocaleString();
 const tooBig = (name, bytes) =>
-  `“${name}” is ${asMB(bytes)} MB — over the ${MAXMB} MB limit.`;
+  `“${name}” is ${asMB(bytes)} MB, over the ${MAXMB} MB limit.`;
 
 /* Said in two places, because the empty-state card and the add panel are each
    somebody's first sight of the uploader. Runs now with the built-in fallback
@@ -99,7 +117,7 @@ const tooBig = (name, bytes) =>
    server's real MAX_UPLOAD_MB (which is the one actually enforced). */
 function renderLimit(){
   const drop=$("#upLimit"), card=$("#dropLimit");
-  if(drop) drop.textContent=`Up to ${limitText()} each — about a 90-minute video at 720p`;
+  if(drop) drop.textContent=`Up to ${limitText()} each, about a 90-minute video at 720p`;
   if(card) card.textContent=`Up to ${limitText()} each.`;
 }
 renderLimit();
@@ -118,6 +136,11 @@ renderLimit();
       if(dhint) dhint.classList.remove("hidden");
       $("#diarizeRow").classList.add("opacity-60","cursor-not-allowed");
     }
+    // Restore the sticky preference only AFTER the availability check above: a
+    // switch that is disabled for a missing key must stay off no matter what
+    // the last session preferred, or it would read as on and do nothing.
+    loadDiarizePref();
+    if(dchk) dchk.addEventListener("change", saveDiarizePref);
     // The button is always on screen; this only decides whether clicking opens
     // Google's picker or explains what's missing (see its handler).
     if(c.gdrive && c.gdrive.enabled) GD=c.gdrive;
@@ -125,7 +148,7 @@ renderLimit();
       b.textContent="LLM: "+(c.llm_model||c.llm_provider);
       b.className="md:ml-auto text-xs px-3 py-1 rounded-full border border-[#cfe8d6] text-[#1f7a43] hidden sm:inline";
     } else {
-      b.textContent="No LLM — moments only";
+      b.textContent="No LLM, moments only";
       b.className="md:ml-auto text-xs px-3 py-1 rounded-full border border-[#e7c46a] text-[#8a6d1a] bg-[#fbf2d8] hidden sm:inline";
     }
     renderSetup(c.setup);
@@ -162,12 +185,12 @@ function renderSetup(s){
           </div>`;
         }).join("")
       + `<div class="text-[10.5px] text-muted mt-2">Set these in your <code class="bg-paper2 rounded px-1">.env</code>, then restart.</div>`
-    : `<div class="text-[12px] text-[#1f7a43] font-600 flex items-center gap-1.5"><span aria-hidden="true">✓</span>All keys set — every feature is on.</div>`;
+    : `<div class="text-[12px] text-[#1f7a43] font-600 flex items-center gap-1.5"><span aria-hidden="true">✓</span>All keys set. Every feature is on.</div>`;
 
   const bar=$("#setupBar");
   if(blocking.length){
     $("#setupBarMsg").textContent = blocking.length===1
-      ? `${blocking[0].feature} — set ${blocking[0].env.join(" + ")} to fix it`
+      ? `${blocking[0].feature}: set ${blocking[0].env.join(" + ")} to fix it`
       : `${blocking.length} things still need setup to unlock everything`;
     // Always show while a blocking gap exists. ✕ only clears it for THIS view — it
     // returns on the next load, on purpose: a real "ingest is off" problem must not
@@ -254,6 +277,16 @@ function renderVideoList(){
   wireRowButtons(box);
 }
 
+/* The stamped receipt for one video: what it was ACTUALLY queued with, not what
+   the switch currently says. Every row renders it, both states, so a mixed list
+   is readable without opening anything — that is the whole point of stamping.
+   Inert by design: a record, never a control (see .spk in app.css). */
+function spkBadge(v){
+  return v.diarize
+    ? `<span class="spk spk-on">Speakers on</span>`
+    : `<span class="spk spk-off">Speakers off</span>`;
+}
+
 function videoRow(v){
   const b=statusBadge(v);
   // A delete in flight owns the row: no checkbox to toggle, no second ✕ to press,
@@ -264,7 +297,7 @@ function videoRow(v){
       <span class="w-4 flex justify-center shrink-0"><span class="dotPulse"></span></span>
       <div class="min-w-0 flex-1">
         <div class="text-[12px] font-600 leading-snug line-clamp-1 text-ink">${esc(v.title||v.id)}</div>
-        <div class="text-[10.5px] text-coral2 mt-0.5">Deleting — removing frames and search index…</div>
+        <div class="text-[10.5px] text-coral2 mt-0.5">Deleting: removing frames and search index…</div>
       </div>
     </div>`;
   }
@@ -302,14 +335,20 @@ function videoRow(v){
     ${thumb}
     <div class="min-w-0 flex-1">
       <div class="text-[12px] font-600 leading-snug line-clamp-2 text-ink">${esc(v.title||v.id)}</div>
-      <div class="text-[10.5px] ${b.c} mt-0.5 truncate">${esc(b.label)}${pct!==null&&busy?` · ${pct}%`:""}${v.diarize?" · 🎙":""}</div>
+      <div class="text-[10.5px] ${b.c} mt-0.5 flex items-center gap-1.5 min-w-0">
+        <span class="truncate">${esc(b.label)}${pct!==null&&busy?` · ${pct}%`:""}</span>
+        ${spkBadge(v)}
+      </div>
       ${rail}
+      ${v.status==="indexed" && v.transcript_note
+        ? `<div class="text-[10px] text-[#8a6d1a] mt-1 leading-snug line-clamp-2" title="${esc(v.transcript_note)}">⚠ ${esc(v.transcript_note)}</div>`
+        : ""}
     </div>
     <div class="flex flex-col gap-0.5 shrink-0">
       ${v.status==="failed"?`<button class="text-muted hover:text-coral2 text-[11px]" data-retry="${esc(v.id)}" title="Retry">↻</button>`:""}
       ${v.is_sample?"":`<button class="w-5 h-5 rounded flex items-center justify-center text-muted hover:text-white hover:bg-coral2 text-[11px] transition"
          data-del="${esc(v.id)}" data-title="${esc(v.title||v.id)}"
-         title="Delete this video — removes its frames and search index">✕</button>`}
+         title="Delete this video, removes its frames and search index">✕</button>`}
     </div>
   </div>`;
 }
@@ -369,7 +408,7 @@ function pipelineCards(list, pad="p-4"){
     const b=statusBadge(v);
     return `<div class="bg-card border border-line rounded-2xl ${pad}">
       <div class="flex items-center gap-2">
-        <div class="text-[13px] font-600 leading-snug line-clamp-1 min-w-0 flex-1">${esc(v.title||v.id)}${v.diarize?' <span class="text-[10px] text-coral2">🎙 speakers</span>':""}</div>
+        <div class="text-[13px] font-600 leading-snug line-clamp-1 min-w-0 flex-1">${esc(v.title||v.id)} ${spkBadge(v)}</div>
         <div class="text-[11.5px] ${b.c} shrink-0">${b.icon} ${esc(b.label)}${pct!==null&&!done?` · ${pct}%`:""}</div>
       </div>
       ${v.status==="failed"
@@ -383,7 +422,7 @@ function pipelineCards(list, pad="p-4"){
 function renderPipeline(){
   const w=working(), f=failed();
   $("#procSub").textContent = w.length
-    ? "Sampling frames, embedding them and pulling the transcript. You can leave this page — it keeps going."
+    ? "Sampling frames, embedding them and pulling the transcript. You can leave this page. It keeps going."
     : f.length ? "Nothing finished indexing. Here's what happened."
     : "Nothing is being processed right now.";
   $("#pipeline").innerHTML=pipelineCards(vids());
@@ -411,7 +450,7 @@ function renderIndexingStrip(){
     const pct=lead.progress ? ` ${Math.round(lead.progress*100)}%` : "";
     const stage=(STAGES[stageIndex(lead.status)]||{nm:"finishing"}).nm;
     $("#indexingLine").textContent =
-      `${w.length} video${w.length===1?"":"s"} indexing — ${stage}${pct}` +
+      `${w.length} video${w.length===1?"":"s"} indexing: ${stage}${pct}` +
       (f.length ? ` · ${f.length} failed` : "");
   }else{
     $("#indexingLine").textContent = `${f.length} video${f.length===1?"":"s"} failed to index`;
@@ -440,7 +479,7 @@ function renderAskHead(){
     : "Ask about your videos…";
   $("#scopeNote").textContent =
     !r ? "Nothing searchable yet"
-      : !c.length ? "No videos checked — check one in the rail to search"
+      : !c.length ? "No videos checked. Check one in the rail to search"
       : "";
 }
 
@@ -459,6 +498,8 @@ const STAGE_WORDS={
   embedding: "Understanding your question",
   searching: "Searching what's on screen and what's said",
   ranking:   "Picking the strongest moments",
+  splitting: "Checking whether your question has several parts",
+  parts:     "Searching each part in parallel",
   reading:   "Opening those moments",
   answering: "Writing the answer with citations",
 };
@@ -598,11 +639,15 @@ function renderAnswer(){
   if(!SHOWN){ clearAnswer(); return; }
   document.body.dataset.ans="1";
   $("#askHead").classList.add("hidden");
-  const m=SHOWN.message, cites=m.citations||[], note=(m.meta||{}).note;
+  const m=SHOWN.message, cites=m.citations||[], note=(m.meta||{}).note, parts=(m.meta||{}).parts||[];
+  // typeof guard: a cached older common.js has no partsLine, and the answer must
+  // still render without the "searched as" line.
+  const searched = (parts.length>1 && typeof partsLine==="function") ? partsLine(parts) : "";
   $("#answer").innerHTML=`
     <div class="ans max-w-3xl mx-auto pt-2">
       ${askedBlock(SHOWN.q)}
       <div class="prose-body text-[15px]">${renderMarkdown(m.content)}</div>
+      ${searched}
       ${note?`<p class="text-[11px] text-muted mt-2">${esc(note)}</p>`:""}
       ${cites.length?`
         <div class="text-[11px] uppercase tracking-wider text-muted font-semibold mt-6 mb-2">Moments</div>
@@ -685,7 +730,7 @@ function loadScript(src){
     const s=document.createElement("script");
     s.src=src; s.async=true;
     s.onload=()=>{ s.dataset.ok="1"; resolve(); };
-    s.onerror=()=>reject(new Error("Couldn't reach Google — check the connection."));
+    s.onerror=()=>reject(new Error("Couldn't reach Google. Check the connection."));
     document.head.appendChild(s);
   });
 }
@@ -743,7 +788,7 @@ async function gdriveDownload(doc, token){
     // These are permanent, not retryable: a clear sentence beats a status code.
     if(r.status===403) throw new Error("Drive refused the download (no permission, or its download quota is used up).");
     if(r.status===404) throw new Error("That file is no longer in Drive.");
-    if(r.status===401){ GD_TOKEN=null; throw new Error("Google access expired — click Import again."); }
+    if(r.status===401){ GD_TOKEN=null; throw new Error("Google access expired. Click Import again."); }
     throw new Error("Drive download failed ("+r.status+").");
   }
   const blob=await r.blob();
@@ -757,7 +802,7 @@ $("#gdriveBtn").onclick=async()=>{
   // what's missing instead of swallowing the click.
   if(!GD){
     $("#ingestStatus").textContent=
-      "Google Drive import isn't configured — set GDRIVE_CLIENT_ID and GDRIVE_API_KEY in .env (see .env.example), then restart.";
+      "Google Drive import isn't configured. Set GDRIVE_CLIENT_ID and GDRIVE_API_KEY in .env (see .env.example), then restart.";
     return;
   }
   const btn=$("#gdriveBtn"), label=$("#gdriveLabel"), st=$("#ingestStatus");
@@ -818,7 +863,7 @@ async function uploadAll(files){
         await apiJSON(`/api/sessions/${encodeURIComponent(WS.id)}/videos`,{method:"POST",
           headers:{"Content-Type":"application/json"}, body:JSON.stringify({video_id:p.video_id})});
         row.remove();
-        $("#ingestStatus").textContent="Already indexed — added instantly.";
+        $("#ingestStatus").textContent="Already indexed, added instantly.";
         await refresh();
         continue;
       }

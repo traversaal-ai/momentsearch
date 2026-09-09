@@ -152,10 +152,16 @@ def t_transcript(video_id: str, user_id: str, path: str | None = None) -> int:
     row = db.get_video(video_id) or {}
     try:
         if row.get("source") == "youtube" and row.get("url"):
-            cues, origin, empty_note = get_youtube_cues(row["url"], video_id), "captions", "no captions"
+            cues, origin = get_youtube_cues(row["url"], video_id), "captions"
+            empty_note = ("Transcript not indexed — couldn't fetch this video's "
+                          "captions (it may have none, or YouTube blocked the "
+                          "request). Add a SocialKit key or cookies (see README), "
+                          "then retry. Search still works on what's on screen.")
         elif path:
             from .asr import transcribe
-            cues, origin, empty_note = transcribe(path), "ASR", "no speech"
+            cues, origin = transcribe(path), "ASR"
+            empty_note = ("Transcript not indexed — no speech was detected in this "
+                          "upload's audio. Search still works on what's on screen.")
         else:
             return 0  # nothing to transcribe (e.g. upload with the scratch file gone)
         # Speaker diarization ("who said what") — opt-in per video. Gemini labels
@@ -169,7 +175,8 @@ def t_transcript(video_id: str, user_id: str, path: str | None = None) -> int:
                 print(f"[transcript] {video_id}: diarized speakers={speakers}")
         chunks = chunk_cues(cues)
         if not chunks:
-            print(f"[transcript] {video_id}: {empty_note} — visual-only")
+            print(f"[transcript] {video_id}: {origin} empty — visual-only")
+            db.set_transcript_note(video_id, empty_note)   # tell the user why
             return 0
         # Persist a durable copy of the timed transcript to object storage — so a
         # future re-embed (e.g. swapping the text model) doesn't have to re-fetch
@@ -192,9 +199,14 @@ def t_transcript(video_id: str, user_id: str, path: str | None = None) -> int:
              **({"speaker": c["speaker"]} if c.get("speaker") else {}),
              "embed_version": TEXT_EMBED_VERSION} for c in chunks])
         print(f"[transcript] {video_id}: indexed {len(chunks)} transcript chunks ({origin})")
+        db.set_transcript_note(video_id, None)          # success — clear any prior warning
         return len(chunks)
     except Exception as exc:
         print(f"[transcript] {video_id}: failed ({type(exc).__name__}: {exc}) — visual-only")
+        db.set_transcript_note(
+            video_id,
+            f"Transcript not indexed — hit an error ({type(exc).__name__}) while "
+            "fetching or embedding it. Search still works on what's on screen.")
         return 0
 
 

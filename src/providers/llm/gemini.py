@@ -11,12 +11,14 @@ from __future__ import annotations
 from .base import SYSTEM, LLMConfig, downscale, intro, label
 
 
-def answer(cfg: LLMConfig, question: str, moments: list[dict]) -> str:
+def answer(cfg: LLMConfig, question: str, moments: list[dict],
+           opts: dict | None = None) -> str:
     from google import genai
     from google.genai import types
 
     client = genai.Client(api_key=cfg.api_key)
-    parts: list[types.Part] = [types.Part.from_text(text=intro(question, moments))]
+    parts: list[types.Part] = [
+        types.Part.from_text(text=intro(question, moments, **(opts or {})))]
     for i, m in enumerate(moments, 1):
         parts.append(types.Part.from_text(text=label(i, m)))
         if m.get("image"):
@@ -29,6 +31,25 @@ def answer(cfg: LLMConfig, question: str, moments: list[dict]) -> str:
             system_instruction=SYSTEM,
             temperature=0.2,
             max_output_tokens=cfg.max_tokens,
+        ),
+    )
+    return (resp.text or "").strip()
+
+
+def complete(cfg: LLMConfig, system: str, user: str, max_tokens: int = 1500) -> str:
+    """Plain text in, plain text out — for the small helper calls (the multi-part
+    question check) that share the answer model's provider and key."""
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=cfg.api_key)
+    resp = client.models.generate_content(
+        model=cfg.model,
+        contents=user,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.2,
+            max_output_tokens=max_tokens,
         ),
     )
     return (resp.text or "").strip()

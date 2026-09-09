@@ -275,7 +275,7 @@ def _answer_turn(session_id: str, req: Ask, uid: str, on_stage=None) -> dict:
         raise HTTPException(503, str(exc)) from exc
     citations = result.get("citations") or []
     meta = {k: result.get(k) for k in
-            ("llm_used", "abstained", "llm_source", "llm_model", "note")
+            ("llm_used", "abstained", "llm_source", "llm_model", "note", "parts")
             if result.get(k) is not None}
     db.add_message(session_id, "user", question)
     row = db.add_message(session_id, "assistant", result.get("answer") or "",

@@ -1,8 +1,8 @@
 """Central env-driven config — every knob in one place.
 
-Same conventions as the digital-twin-akash service: module-level constants,
-provider-neutral STORAGE_* credentials with AWS_* fallbacks, Prefect Cloud
-read straight from PREFECT_API_URL / PREFECT_API_KEY by the SDK.
+Conventions here: module-level constants, provider-neutral STORAGE_*
+credentials with AWS_* fallbacks, Prefect Cloud read straight from
+PREFECT_API_URL / PREFECT_API_KEY by the SDK.
 
 Model choice follows the same provider-neutral idea: pick a provider NAME and
 src/providers/registry.py supplies the endpoint, the default model, the vector
@@ -317,20 +317,19 @@ TRANSCRIPT_CHUNK_SECONDS = _float("TRANSCRIPT_CHUNK_SECONDS", 20.0)
 TRANSCRIPT_LANGS = [c.strip() for c in
                     os.getenv("TRANSCRIPT_LANGS", "en,en-US,en-GB").split(",") if c.strip()]
 
-# Transcript SOURCE for YOUTUBE videos (uploads always use ASR below, unaffected).
-# yt-dlp captions are free but fetched from YOUR ip, which YouTube bot-checks
-# (see YT_COOKIES_* / YT_PROXY_URL below); Supadata (supadata.ai) is a hosted API
-# that returns the same captions from its OWN infrastructure, sidestepping the ip
-# block — no cookies, no proxy. Free tier: ~100 requests/month.
-#   auto (default) -> Supadata IF SUPADATA_API_KEY is set, else yt-dlp captions.
-#                     In auto a Supadata miss/error falls back to yt-dlp.
-#   youtube        -> always yt-dlp captions (cookies/proxy); never Supadata.
-#   supadata       -> always Supadata, no fallback (needs SUPADATA_API_KEY).
-TRANSCRIPT_PROVIDER = os.getenv("TRANSCRIPT_PROVIDER", "auto").strip().lower()
-SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY", "").strip()
-SUPADATA_BASE_URL = (os.getenv("SUPADATA_BASE_URL", "").strip()
-                     or "https://api.supadata.ai/v1")
-SUPADATA_TIMEOUT = _int("SUPADATA_TIMEOUT", 30)
+# YouTube SOURCE for both the transcript AND the video (uploads use ASR + their
+# own bucket file, unaffected). yt-dlp fetches from YOUR ip, which YouTube
+# bot-checks (see YT_COOKIES_* / YT_PROXY_URL below); SocialKit (socialkit.dev)
+# is a hosted API that returns BOTH the captions and the video from its OWN
+# infrastructure, sidestepping the ip block — no cookies, no proxy. Set the key
+# to use it for both branches (yt-dlp is the automatic fallback on any
+# miss/error); leave it blank to use yt-dlp only. Free: 20 credits, then paid.
+# Docs: https://docs.socialkit.dev
+SOCIALKIT_API_KEY = os.getenv("SOCIALKIT_API_KEY", "").strip()
+SOCIALKIT_BASE_URL = (os.getenv("SOCIALKIT_BASE_URL", "").strip()
+                      or "https://api.socialkit.dev")
+SOCIALKIT_VIDEO_QUALITY = os.getenv("SOCIALKIT_VIDEO_QUALITY", "480p").strip()
+SOCIALKIT_TIMEOUT = _int("SOCIALKIT_TIMEOUT", 60)
 
 # --- Speech-to-text (ASR) for UPLOADS ------------------------------------------
 # YouTube hands us captions; uploaded files don't, so their transcript branch is
@@ -511,6 +510,35 @@ VISUAL_STRONG = _float("VISUAL_STRONG", 0.45)
 # into the "% match" the UI shows (gate -> low %, strong -> ~100%). bge text
 # cosines run ~0.5-0.7 for real matches, so 0.65 reads as a clearly-strong hit.
 TEXT_STRONG = _float("TEXT_STRONG", 0.65)
+
+# --- Answer context, multi-part questions, per-moment pruning ----------------------
+# Seconds of transcript AROUND each retrieved moment that the answer model also
+# reads: the chunk before/after a transcript hit, the speech playing over a frame.
+# Measured from the matched chunk's edges, so 10s reaches both neighbours. The
+# model sees it; the UI card keeps showing the matched excerpt. 0 = off.
+CONTEXT_PAD_S = _float("CONTEXT_PAD_S", 10.0)
+# Multi-part questions ("what does A say, and how does B respond?"): one small LLM
+# call (same model/key as the answers) decides whether to split; each part is then
+# retrieved IN PARALLEL and the model answers every part from all the moments. The
+# split check runs alongside the normal retrieval, so a single-part question pays
+# no extra latency. Parts are capped; moments are shared out across them.
+MULTI_QUERY = _envbool("MULTI_QUERY", True)
+MULTI_QUERY_MAX_PARTS = _int("MULTI_QUERY_MAX_PARTS", 3)
+MULTI_QUERY_TOTAL_K = _int("MULTI_QUERY_TOTAL_K", 12)   # moments across all parts
+# Per-moment pruning (the gate above is per QUESTION; these judge each moment).
+# Frames: a frame-only moment is dropped when its CLIP score is under this share
+# of the best frame's. Text: transcript moments the reranker scored under this
+# 0-1 relevance are dropped (only when the reranker ran). A moment survives if
+# EITHER branch is good. BOTH DEFAULT OFF, on measurement (42-question set, 80
+# ground-truth moments): CLIP's text->image cosines are so compressed that every
+# top-20 frame sits within ~25% of the best, so a ratio up to 0.75 never fired;
+# and the default ms-marco MiniLM reranker gives ~0 to conversational ASR chunks
+# (median 0.001 for CORRECT moments), so a floor of even 0.01 cut correct
+# transcript moments and let frame junk fill their slots (51 -> 47 hits). The
+# ranking uses its ORDER, which is fine; its absolute value is not a quality
+# signal. Turn the floor on only with a calibrated reranker (e.g. Cohere).
+FRAME_SCORE_RATIO = _float("FRAME_SCORE_RATIO", 0.0)
+TEXT_RERANK_FLOOR = _float("TEXT_RERANK_FLOOR", 0.0)
 
 # --- Multimodal LLM (answer synthesis only — retrieval works without it) -----------
 # LLM_PROVIDER is a name from registry.LLM_PRESETS — openai, gemini, anthropic,

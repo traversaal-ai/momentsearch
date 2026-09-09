@@ -227,7 +227,8 @@ def register(req: RegisterRequest, uid: str = Depends(user_id)):
 # ── Status / lifecycle ─────────────────────────────────────────────────────────
 
 _PUBLIC_FIELDS = ("id", "source", "url", "title", "status", "error",
-                  "frame_count", "progress", "attempts", "created_at", "updated_at")
+                  "frame_count", "diarize", "progress", "attempts",
+                  "transcript_note", "created_at", "updated_at")
 
 
 def _public(row: dict) -> dict:
@@ -272,6 +273,7 @@ def retry(video_id: str, uid: str = Depends(user_id)):
     if row is None or row["user_id"] != uid:
         raise HTTPException(404, "Video not found.")
     db.set_status(video_id, "pending", error=None)
+    db.set_transcript_note(video_id, None)   # clear a stale transcript warning; the re-run resets it
     if config.ENABLE_FAIR_DISPATCH:
         return {"video_id": video_id, "status": "pending"}  # dispatcher re-admits it fairly
     flow_run_id = jobs.enqueue_video(video_id, uid)

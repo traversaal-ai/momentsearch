@@ -26,7 +26,9 @@ SYSTEM = (
     "video FRAME (what was shown on screen) and/or a TRANSCRIPT excerpt (what was "
     "said out loud). Use BOTH kinds of evidence: for a question about what someone "
     "SAID or talked about, read the transcript text; for a question about what is "
-    "SHOWN, read the frame.\n"
+    "SHOWN, read the frame. A moment may also carry CONTEXT — what was said just "
+    "before/after the matched excerpt, or while a frame was on screen. Treat context "
+    "as part of that moment: use it, and cite the same [n].\n"
     "Rules:\n"
     "1. Read the question carefully and answer exactly what is asked. Start with a "
     "one-line direct answer, then explain in short paragraphs — ONE paragraph per "
@@ -47,20 +49,32 @@ SYSTEM = (
     "SEPARATE paragraphs, each with its own citation.\n"
     "   Cover every distinct relevant point — don't merge unrelated ones and don't "
     "drop any.\n"
-    "4. You MAY use the video's title and the obvious overall context to say what "
-    "it is broadly about (uncited). But do NOT invent SPECIFIC facts, quotes, "
-    "numbers, opinions or claims that aren't actually in the moments — if a "
-    "specific detail isn't shown or said in a moment, don't state it, and don't "
-    "cite one for it.\n"
-    "5. Abstain ONLY as a last resort: if — and only if — none of the moments are "
-    "relevant to the question at all, reply with a single sentence saying you "
-    "couldn't find it in the video. If even one moment is relevant, ANSWER from "
-    "it; do not refuse just because the match is partial.\n"
+    "4. You MAY add a light framing from the video's title/obvious context, but the "
+    "ANSWER ITSELF must come from the moments AND address the question. Never turn "
+    "\"what the video is broadly about\" into the answer when the moments don't "
+    "actually address what was asked (see rule 5). Do NOT invent SPECIFIC facts, "
+    "quotes, numbers, opinions or claims that aren't in the moments — if a specific "
+    "detail isn't shown or said in a moment, don't state it, and don't cite one.\n"
+    "5. STAY TRUE TO THE QUESTION. First judge whether the moments actually ADDRESS "
+    "WHAT THE USER ASKED — not merely whether they come from the video. If none of "
+    "the moments address the question, reply with ONE sentence that you couldn't "
+    "find it in the video(s) and STOP — do NOT substitute a general summary of the "
+    "video instead. Answer only when at least one moment genuinely speaks to the "
+    "question; a partial but on-topic match is still worth answering. (If the "
+    "'question' is not a real question — e.g. a bare URL or gibberish — say you "
+    "couldn't find an answer rather than summarizing.)\n"
     "6. SPEAKER ATTRIBUTION — only for moments tagged 'speaker: <name>'; attribute "
     "that moment's point to that exact person by name. NEVER invent a name or write "
     "a placeholder like \"Unnamed Speaker\"; don't attribute untagged moments to "
     "anyone. If (and only if) the instructions below the question ask for a "
-    "\"Who said what\" table, add it as the very last thing in your answer."
+    "\"Who said what\" table, add it as the very last thing in your answer.\n"
+    "7. ANSWER COMPLETELY, AND USE THE FACTS THAT ARE THERE. Address EVERY part of "
+    "the question — a multi-part question needs each part answered, each with its "
+    "own citation. And do not leave specifics on the table: when a moment's "
+    "transcript or frame holds an exact detail the question asks for — a number, "
+    "name, definition, step, quote or example — state it explicitly and cite it. "
+    "A vague or half answer while the precise fact is sitting right there in a "
+    "moment is a failure, even if what you did say is correct."
 )
 
 
@@ -149,40 +163,70 @@ def named_speakers(moments: list[dict]) -> list[str]:
     return out
 
 
-def intro(question: str, moments: list[dict]) -> str:
+def intro(question: str, moments: list[dict], parts: list[str] | None = None,
+          missing: list[int] | None = None) -> str:
+    """The user turn's preamble. `parts`/`missing` come from the multi-part path
+    (src/rag/query_split.py): the sub-questions the moments were retrieved for,
+    and the indexes of any part that found nothing worth showing."""
     n = len(moments)
     text = (
         f"QUESTION: {question}\n\n"
         f"Answer this question using the {n} moments below (numbered 1 to {n}). "
         "Each has a timestamp and a video frame and/or a transcript excerpt. If "
         "the question is about what was said, use the transcript text. Give a "
-        "direct answer grounded in the relevant moment(s), cited as [n]. Only say "
-        "you couldn't find it if none of the moments are relevant."
+        "direct answer grounded in the relevant moment(s), cited as [n]. FIRST check "
+        "the moments actually ADDRESS the question — if none do, reply with ONE "
+        "sentence that you couldn't find it and STOP; do NOT summarize the video "
+        "instead."
     )
+    if parts and len(parts) > 1:
+        listed = "\n".join(f"  {i}) {p}" for i, p in enumerate(parts, 1))
+        text += (
+            f"\n\nThe question has {len(parts)} parts:\n{listed}\n"
+            "Each moment below says which part(s) it was retrieved for. Answer EVERY "
+            "part, in order, one short paragraph each with its own citations; a "
+            "moment retrieved for one part may still support another."
+        )
+        gaps = "; ".join(f"{i + 1}) {parts[i]}" for i in (missing or []) if i < len(parts))
+        if gaps:
+            text += (
+                f"\nNo matching moments were found for: {gaps}. For each of those, "
+                "write ONE sentence saying the videos don't cover it — do not guess."
+            )
     # The "Who said what" table is decided HERE (deterministically), not left to
     # the model: add the directive only when 2+ real names actually appear.
     names = named_speakers(moments)
     if len(names) >= 2:
         text += (
             f"\n\nThese moments feature multiple speakers ({', '.join(names)}). "
-            "You MUST end your answer with a markdown table titled exactly "
-            "`### Who said what`, with the header row EXACTLY "
-            "`| Speaker | Their point | Source |` followed by a `| --- | --- | --- |` "
-            "row, then ONE row per speaker: their point in a single line in their "
-            "own voice, and Source = the moment number(s) like [1] or [2, 3]. "
-            "Every row must start and end with a pipe `|`. This table is required."
+            "IF you actually answer (the moments address the question), end your "
+            "answer with a markdown table titled exactly `### Who said what`, header "
+            "row EXACTLY `| Speaker | Their point | Source |` then a "
+            "`| --- | --- | --- |` row, then ONE row per speaker WHO HAS A REAL POINT "
+            "in the moments: their point in a single line in their own voice, "
+            "Source = the moment number(s) like [1] or [2, 3]. Every row starts and "
+            "ends with a pipe `|`. Skip any speaker with no relevant point — never "
+            "write filler like \"no specific point\". If you couldn't find an answer, "
+            "OMIT the table entirely."
         )
     return text
 
 
 def label(i: int, m: dict) -> str:
-    line = f"[{i}] @ {m.get('timestamp', '')}"
+    line = f"[{i}]"
+    if m.get("parts"):     # multi-part question: which sub-question found it
+        line += " (for part " + "/".join(str(p) for p in m["parts"]) + ")"
+    line += f" @ {m.get('timestamp', '')}"
     if m.get("speaker"):
         line += f' speaker: {m["speaker"]}'
     if m.get("transcript"):
         line += f' transcript: "{m["transcript"]}"'
     if m.get("image") is None:
         line += " (transcript only, no frame)"
+    # CONTEXT_PAD_S: the speech around the moment — indented under [i] so it reads
+    # as part of this moment, not as a new one.
+    for where, text in m.get("context") or []:
+        line += f'\n    {where}: "{text}"'
     return line
 
 
@@ -259,6 +303,8 @@ def fit_local_context(cfg: LLMConfig,
         text = m.get("transcript")
         if text and chars > 0 and len(text) > chars:
             m["transcript"] = text[:chars].rstrip() + "…"
+        if chars > 0:
+            m.pop("context", None)   # the surrounding speech is the first thing to go
         out.append(m)
 
     # Nothing actually changed (few moments, already-small frames) -> no note.

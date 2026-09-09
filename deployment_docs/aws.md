@@ -176,7 +176,7 @@ Check it landed — ☁️ on the instance:
 ls -la ~/momentsearch/.env      # should show the file with a real size (not missing / 0 bytes)
 ```
 
-> **YouTube links** need cookies or a proxy (the EC2 IP is bot-checked; uploads work without either). For **cookies**: export a `cookies.txt` (how → [README → YouTube ingest](../README.md#youtube-ingest--cookies)), then copy it up like your `.env`:
+> **YouTube links** need a **SocialKit key** (easiest — one key covers transcript + video, set `SOCIALKIT_API_KEY` in your `.env`), cookies, or a proxy (the EC2 IP is bot-checked; uploads work without any). See **[README → YouTube ingest](../README.md#youtube-ingest)** for all three. For the **cookies** option: export a `cookies.txt`, then copy it up like your `.env`:
 > ```bash
 > # ☁️ on the instance — make the folder and make sure you own it:
 > mkdir -p ~/momentsearch/secrets

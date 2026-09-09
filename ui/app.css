@@ -254,6 +254,122 @@ body[data-ans="1"] #answer{flex:0 0 auto}
 /* ── Reduced motion ────────────────────────────────────────────────────────
  * Everything above is decoration; none of it carries meaning that survives
  * only in the movement. So: land on the final frame immediately.            */
+
+/* ── Text balance (ported from the internal app's landing) ─────────────── */
+/* A display line that ends on a single short word reads as a mistake at any
+   size, and this headline did it at every breakpoint ("...in any / video.").
+   balance evens the line lengths; pretty only guards the last line, which is
+   what body copy needs. Both degrade to normal wrapping where unsupported. */
+.balance{text-wrap:balance}
+.pretty{text-wrap:pretty}
+
+/* ── Step spine ────────────────────────────────────────────────────────────
+ * The hairline through the numerals says "sequence": one rule spanning the whole
+ * row with the three dots threaded onto it, so the row reads across before it
+ * reads down any single step. It runs edge to edge rather than stopping at the
+ * outer two dots - a rule that ends exactly where the first and last dot sit
+ * reads as a measured span between them, which is the wrong idea; carrying it
+ * past both says the sequence is a continuous line the steps are placed on.
+ * Nothing here needs the column geometry any more, so the ends are 0 and the
+ * dots (solid coral, z-10) sit over it rather than interrupting it.
+ *
+ * Vertically the dot is nudged .125rem by .step-num below, so its centre is
+ * 1.125rem down, not 1rem; the half-pixel then pulls the 1px rule onto that
+ * centre instead of a pixel below it.                                         */
+.spine{top:calc(1.125rem - .5px);left:0;right:0}
+
+/* Solid coral badge rather than an outline on paper: at 32px an outline reads
+   as a bullet, not a step in a sequence - the filled dot is what the spine
+   (above) and the mobile rail (below) both need to visually anchor into. */
+.step-num{top:.125rem}
+
+/* Below sm the grid is one column and .spine (a horizontal rule) has nothing
+   to span, so the sequence cue would vanish entirely without this: a vertical
+   rail down the badge column. Row heights vary with text wrap, so this can't
+   be pinned to the last badge's exact centre the way .spine pins to a fixed
+   row height - anchoring 1rem short of both ends (roughly the first and last
+   badge's centre) reads as "runs through the steps" without needing that. */
+.spine-v{top:1rem;left:1rem;bottom:1rem}
+
+/* ── The proof strip ───────────────────────────────────────────────────────
+ * The card under the hero is a diagram of the mechanism, and the mechanism is
+ * a SEQUENCE: a question arrives, every frame and every spoken word gets
+ * scanned, one second wins. Drawn static it showed only the last step — a lit
+ * marker with no account of how it came to be lit — so it read as decoration
+ * rather than as the proof it is meant to be.
+ *
+ * The delays below are tied to the geometry in landing.html: the sweep crosses
+ * the axis in 3s starting at 1.6s, and each tick and waveform bar lights at
+ * the moment the sweep actually reaches it (--i is set per element there, and
+ * the per-step figures are the sweep duration divided by the 13 tick gaps and
+ * 23 bar gaps: 3s/13 = .2308s, 3s/23 = .1304s).                              */
+.pt-tick{fill:#F3ECE0;stroke:#E7DECF}
+.pt-bar{fill:#6B6357;opacity:.35}
+.pt-scan{opacity:0}
+.pt-hit-bar{opacity:0;transform-box:fill-box;transform-origin:50% 100%;transform:scaleY(0)}
+.pt-cap{opacity:0}
+.pt-q::after{content:"";display:inline-block;width:2px;height:.92em;background:#FF5A3C;
+  margin-left:3px;vertical-align:-.1em;opacity:0}
+.proof.typing .pt-q::after{opacity:1;animation:pt-caret 1s steps(1) infinite}
+
+/* The status line, and the pulse that says the thing is working. */
+.pt-search,.pt-found{opacity:0}
+.pt-dot{width:7px;height:7px;border-radius:50%;background:#FF5A3C;flex:none}
+
+/* The moments it actually returned. Real thumbnails from the real corpus, so
+   the timestamps and the relevance words below them are a captured result
+   rather than a mock-up — which is also why the strip above carries no
+   timestamp of its own any more: three moments from three different videos
+   can't honestly sit on one video's timeline. It scans the corpus; these
+   cards carry the detail. */
+.pt-card{opacity:0}
+.pt-shot{position:relative;aspect-ratio:16/9;border-radius:8px;overflow:hidden;
+  background:#E7DECF;border:1px solid #E7DECF}
+.pt-shot img{width:100%;height:100%;object-fit:cover;display:block}
+.pt-ts{position:absolute;bottom:4px;left:4px;padding:1px 5px;border-radius:4px;
+  background:rgba(30,27,22,.82);color:#fff;font-size:9px;font-weight:700;font-variant-numeric:tabular-nums}
+.pt-rel{display:inline-flex;align-items:center;font-size:10px;font-weight:700;margin-top:5px;
+  font-variant-numeric:tabular-nums}
+.pt-rel-hi{color:#1f7a43}
+.pt-rel-mid{color:#8a6d1a}
+.pt-rel-lo{color:#6B6357}
+.pt-ct{margin-top:2px;font-size:10px;line-height:1.35;color:#6B6357;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+.proof.play .pt-search{animation:pt-fade .4s ease 1.6s both, pt-out .3s ease 4.6s both}
+.proof.play .pt-dot{animation:pt-pulse 1s ease-in-out 1.6s 3 both}
+.proof.play .pt-found{animation:pt-fade .4s ease 4.8s both}
+.proof.play .pt-scan{animation:pt-sweep 3s linear 1.6s both}
+.proof.play .pt-tick{animation:pt-lit .6s ease both;animation-delay:calc(1.6s + var(--i)*.2308s)}
+.proof.play .pt-bar{animation:pt-litbar .6s ease both;animation-delay:calc(1.6s + var(--i)*.1304s)}
+/* Two animations, not two rules — a second rule would overwrite the shorthand.
+   Both delays are derived from --i, so a marker lights as the sweep reaches it
+   and steps aside 150ms later, wherever it sits on the axis. */
+.proof.play .pt-hit-dim{animation:pt-lit .6s ease calc(1.6s + var(--i)*.2308s) both,
+  pt-out .3s ease calc(1.75s + var(--i)*.2308s) both}
+.proof.play .pt-hit-bar{animation:pt-grow .5s cubic-bezier(.2,1.5,.4,1) both;
+  animation-delay:calc(1.75s + var(--i)*.2308s)}
+.proof.play .pt-card{animation:pt-rise .55s cubic-bezier(.2,1.1,.4,1) both;
+  animation-delay:calc(4.8s + var(--i)*.22s)}
+.proof.play .pt-cap{animation:pt-fade .5s ease 5.7s both}
+
+@keyframes pt-caret{50%{opacity:0}}
+@keyframes pt-pulse{
+  0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(255,90,60,.55)}
+  50%{transform:scale(1.3);box-shadow:0 0 0 7px rgba(255,90,60,0)}
+}
+@keyframes pt-sweep{
+  0%{opacity:0;transform:translateX(0)}
+  6%{opacity:1} 94%{opacity:1}
+  100%{opacity:0;transform:translateX(440px)}
+}
+@keyframes pt-lit{0%,100%{fill:#F3ECE0;stroke:#E7DECF}40%{fill:#FFD8CD;stroke:#FFAF9A}}
+@keyframes pt-litbar{0%,100%{opacity:.35}40%{opacity:.9}}
+@keyframes pt-out{to{opacity:0}}
+@keyframes pt-grow{from{opacity:0;transform:scaleY(0)}to{opacity:1;transform:scaleY(1)}}
+@keyframes pt-rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+@keyframes pt-fade{to{opacity:1}}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:1ms!important;animation-iteration-count:1!important;
     transition-duration:1ms!important;scroll-behavior:auto!important}
@@ -263,6 +379,17 @@ body[data-ans="1"] #answer{flex:0 0 auto}
      appearing at all when motion is unwelcome */
   .mark .ink{clip-path:none}
   .mark .nib{display:none}
+  /* The 1ms duration above collapses the proof strip's animations but does NOT
+     touch their delays, so without this the diagram would sit blank and then
+     snap together four seconds later. Land on the finished diagram at once,
+     and drop the sweep and the caret entirely — both are pure movement. */
+  .proof.play *{animation-delay:0s!important}
+  .proof .pt-scan,.proof .pt-search{display:none}
+  .proof .pt-q::after{display:none}
+  .proof .pt-hit-bar{opacity:1;transform:scaleY(1)}
+  .proof .pt-hit-dim{opacity:0}
+  .proof .pt-found,.proof .pt-cap{opacity:1}
+  .proof .pt-card{opacity:1;transform:none}
 }
 
 /* ---- Synced transcript panel (the player modal) ---- */
@@ -274,3 +401,33 @@ body[data-ans="1"] #answer{flex:0 0 auto}
   font-size:.68rem;color:#9aa0a6;margin-right:.45rem;}
 .tline.active{background:rgba(226,104,60,.12);color:#1a1a1a;}
 .tline.active .ts{color:#e2683c;font-weight:600;}
+
+/* ── Speaker recognition: the switch and the receipt ────────────────────────
+ * The control is a REAL checkbox, visually replaced by a switch, so keyboard,
+ * focus and screen readers keep working (role="switch" carries the semantics)
+ * and workspace.js still reads #diarizeChk.checked at submit time exactly as
+ * before. The <i> must follow the input: the checked state is drawn through
+ * the adjacent-sibling selector.
+ *
+ * Geometry from the handoff: 34x20 track, 16px knob, 2px inset, so the travel
+ * is 34 - 16 - (2*2) = 14px. */
+.sw{position:relative;display:inline-block;width:34px;height:20px;flex:none}
+.sw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.sw i{position:absolute;inset:0;border-radius:999px;background:#DCD5C7;
+  transition:background .18s ease;pointer-events:none}
+.sw i::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;
+  border-radius:999px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.18);
+  transition:transform .18s ease}
+.sw input:checked + i{background:#E86649}
+.sw input:checked + i::after{transform:translateX(14px)}
+.sw input:focus-visible + i{outline:2px solid #B82C14;outline-offset:2px}
+.sw input:disabled{cursor:not-allowed}
+
+/* The per-row receipt: what that video was ACTUALLY indexed with, stamped when
+   it was queued. Deliberately inert — it is a record, not a control, so it
+   carries no hover, no pointer and no focus ring. Flipping the switch above
+   never reaches back and changes one of these. */
+.spk{display:inline-flex;align-items:center;border-radius:999px;padding:1px 6px;
+  font-size:10px;font-weight:700;line-height:1.6;white-space:nowrap;flex:none}
+.spk-on{color:#B8452C;background:#FBEDE9}
+.spk-off{color:#8A8175;background:#F1ECE2}

@@ -176,7 +176,7 @@ Get-Content .env |
   fly secrets import
 ```
 
-**YouTube links** need either **cookies** or a **proxy** to get past Fly's bot-checked IP (uploads work without either) — see **[README → YouTube ingest](../README.md#youtube-ingest--cookies)** to understand both. For the cookies option, send them as a secret:
+**YouTube links** need a **SocialKit key** (easiest — one key covers transcript + video, set `SOCIALKIT_API_KEY` in your `.env`/secrets), **cookies**, or a **proxy** to get past Fly's bot-checked IP (uploads work without any) — see **[README → YouTube ingest](../README.md#youtube-ingest)** for all three. For the cookies option, send them as a secret:
 
 ```powershell
 $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("secrets/cookies.txt"))
@@ -249,4 +249,3 @@ To redeploy after a code change, just run `fly deploy --ha=false` again.
 
 - **Storage options** — Tigris (above) is the easy one on Fly. Google Cloud and Amazon work too: [gcp.md](gcp.md#object-storage), [aws.md](aws.md#object-storage). Each bucket stays private; the app reaches it with keys, not public access.
 - **GPU / big jobs** — Fly is CPU-only. For a GPU embedder, run the `clip` part on a GPU machine elsewhere and point `EMBED_SERVICE_URL` at it, using [`fly.slim.toml`](../fly.slim.toml) for the Fly side.
-- **Auto-deploy from GitHub** — `.github/workflows/fly-deploy.yml` redeploys on each push, using the same token. Add a `FLY_API_TOKEN` repo secret (make a deploy-only token with `fly tokens create deploy -x 999999h`).
