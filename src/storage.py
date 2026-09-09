@@ -249,7 +249,10 @@ def list_keys(prefix: str) -> list[str]:
         base = root / prefix
         if not base.exists():
             return []
-        return [str(p.relative_to(DATA)).replace("\\", "/")
+        # relative to the root the paths were BUILT from, not to DATA: for a
+        # sample those are sibling trees (demo_corpus/objects vs ./data) and
+        # relative_to() raises instead of returning a key.
+        return [str(p.relative_to(root)).replace("\\", "/")
                 for p in base.rglob("*") if p.is_file()]
     if STORAGE_PROVIDER == "gcp_native":
         return [b.name for b in _gcs_bucket().list_blobs(prefix=prefix)]
