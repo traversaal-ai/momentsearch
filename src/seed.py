@@ -1,4 +1,8 @@
-"""One-shot sample seeder — the startup gate.
+"""One-shot sample gate — what must be true before the app serves.
+
+Two modes (SEED_MODE): `restore` loads the prebuilt corpus from demo_corpus/
+(src/demo_restore.py) — what the shipped presets use; `ingest` indexes the
+samples live (src/seeding.py) — the default for a stack on its own stores.
 
     python -m src.seed     # exits 0 when the samples are indexed (see below)
 
@@ -26,6 +30,14 @@ def main() -> int:
     # STRICT_DEPLOY_CHECK) before the broken version would go live.
     from . import preflight
     preflight.check("seed / release_command")
+
+    # SEED_MODE=restore: the samples were indexed once, offline, and ship as
+    # data in demo_corpus/ — load them instead of re-indexing. It has its own
+    # pass/fail (it verifies all three stores), so it returns straight through.
+    if config.SEED_MODE == "restore":
+        from . import demo_restore
+        return demo_restore.main()
+
     if seed_to_completion():
         return 0
     if config.SEED_STRICT:

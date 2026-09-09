@@ -29,7 +29,12 @@ _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env", override=False)
 
 ROOT = _ROOT
-DATA = ROOT / "data"  # local-provider storage root (dev only)
+# Local-provider storage root (dev only). STORAGE_DIR relocates it so a corpus
+# can be built into its own folder (src/build_demo_corpus.py) without
+# mixing into the working ./data tree. Relative paths resolve from the repo.
+DATA = Path(os.getenv("STORAGE_DIR", "").strip() or ROOT / "data")
+if not DATA.is_absolute():
+    DATA = ROOT / DATA
 
 
 def _envbool(name: str, default: bool) -> bool:
@@ -447,6 +452,44 @@ YT_REMOTE_COMPONENTS = [c.strip() for c in
 # (src/samples.py) if they aren't indexed yet — a fresh clone is queryable on
 # the / page without running anything by hand. Set false to skip.
 SEED_SAMPLE_VIDEOS = _envbool("SEED_SAMPLE_VIDEOS", True)
+# What the startup gate DOES about the sample corpus:
+#   ingest  (default)  index the samples live — src/seeding.py. What a stack
+#                      pointed at its own cloud stores wants.
+#   restore            load the prebuilt corpus shipped in demo_corpus/ —
+#                      src/demo_restore.py. Seconds instead of ~45 minutes,
+#                      and no YouTube. Both shipped presets set this.
+# Default is decided by what is on disk, not by an env var nobody set: if the
+# shipped corpus is here AND the samples are meant to be read from it
+# (DEMO_LOCAL, below), the gate RESTORES it — seconds, no YouTube. Otherwise it
+# falls back to indexing the samples live into your own stores. Set it
+# explicitly to override either way.
+SEED_MODE = (os.getenv("SEED_MODE", "").strip().lower()
+             or ("restore" if (_envbool("DEMO_LOCAL", True)
+                               and (ROOT / "demo_corpus" / "videos.json").exists())
+                 else "ingest"))
+
+# ── The demo corpus lives in the repo, not in your infrastructure ─────────────
+# The ten sample videos ship pre-indexed in demo_corpus/ (built once by
+# src/build_demo_corpus.py). DEMO_LOCAL keeps them there at RUNTIME too:
+# their vectors are read from the bundled Qdrant at DEMO_QDRANT_URL and their
+# frames/transcripts from DEMO_STORAGE_DIR, whatever QDRANT_URL and
+# STORAGE_PROVIDER are set to. So a user can point the app at Qdrant Cloud and a
+# GCS bucket for THEIR uploads and still get the demo instantly, with nothing
+# indexed, nothing uploaded and nothing to pay for.
+#
+# The manifest is the deliberate exception: sample ROWS are replayed into
+# DATABASE_URL, because sessions join videos to chats with a foreign key and a
+# row that lives in another database can't be joined to.
+#
+# Set DEMO_LOCAL=false to fold the samples back into your own stores (they then
+# have to be ingested or imported there like any other video).
+DEMO_LOCAL = _envbool("DEMO_LOCAL", True)
+DEMO_QDRANT_URL = os.getenv("DEMO_QDRANT_URL", "http://qdrant:6333").strip()
+DEMO_QDRANT_API_KEY = os.getenv("DEMO_QDRANT_API_KEY", "").strip()
+DEMO_STORAGE_DIR = os.getenv("DEMO_STORAGE_DIR", "demo_corpus/objects").strip()
+_demo_dir = Path(DEMO_STORAGE_DIR)
+DEMO_DATA = _demo_dir if _demo_dir.is_absolute() else ROOT / _demo_dir
+DEMO_VIDEOS_JSON = ROOT / os.getenv("DEMO_VIDEOS_JSON", "demo_corpus/videos.json").strip()
 # Deploy sanity check (src/preflight.py): on a DEPLOY (FLY_APP_NAME present, or
 # DEPLOY_ENV set) it warns when a LOCAL setting is present — STORAGE_PROVIDER=local,
 # a compose-only Qdrant/Postgres host, COMPOSE_PROFILES — which work locally but

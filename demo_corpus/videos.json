@@ -1,0 +1,122 @@
+[
+  {
+    "id": "yt_aircAruvnKk",
+    "source": "youtube",
+    "url": "https://www.youtube.com/watch?v=aircAruvnKk",
+    "title": "But what is a neural network? | Deep learning chapter 1",
+    "source_hash": "yt_aircAruvnKk",
+    "status": "indexed",
+    "frame_count": 112,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  },
+  {
+    "id": "yt_IHZwWFHWa-w",
+    "source": "youtube",
+    "url": "https://youtu.be/IHZwWFHWa-w",
+    "title": "Gradient descent, how neural networks learn | Deep Learning Chapter 2",
+    "source_hash": "yt_IHZwWFHWa-w",
+    "status": "indexed",
+    "frame_count": 135,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  },
+  {
+    "id": "yt_Ilg3gGewQ5U",
+    "source": "youtube",
+    "url": "https://youtu.be/Ilg3gGewQ5U",
+    "title": "Backpropagation, intuitively | Deep Learning Chapter 3",
+    "source_hash": "yt_Ilg3gGewQ5U",
+    "status": "indexed",
+    "frame_count": 69,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  },
+  {
+    "id": "yt_tIeHLnjs5U8",
+    "source": "youtube",
+    "url": "https://youtu.be/tIeHLnjs5U8",
+    "title": "Backpropagation calculus | Deep Learning Chapter 4",
+    "source_hash": "yt_tIeHLnjs5U8",
+    "status": "indexed",
+    "frame_count": 46,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  },
+  {
+    "id": "yt_LPZh9BOjkQs",
+    "source": "youtube",
+    "url": "https://youtu.be/LPZh9BOjkQs",
+    "title": "Large Language Models explained briefly",
+    "source_hash": "yt_LPZh9BOjkQs",
+    "status": "indexed",
+    "frame_count": 57,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  },
+  {
+    "id": "yt_wjZofJX0v4M",
+    "source": "youtube",
+    "url": "https://youtu.be/wjZofJX0v4M",
+    "title": "Transformers, the tech behind LLMs | Deep Learning Chapter 5",
+    "source_hash": "yt_wjZofJX0v4M",
+    "status": "indexed",
+    "frame_count": 181,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  },
+  {
+    "id": "yt_eMlx5fFNoYc",
+    "source": "youtube",
+    "url": "https://youtu.be/eMlx5fFNoYc",
+    "title": "Attention in transformers, step-by-step | Deep Learning Chapter 6",
+    "source_hash": "yt_eMlx5fFNoYc",
+    "status": "indexed",
+    "frame_count": 182,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  },
+  {
+    "id": "yt_9-Jl0dxWQs8",
+    "source": "youtube",
+    "url": "https://youtu.be/9-Jl0dxWQs8",
+    "title": "How might LLMs store facts | Deep Learning Chapter 7",
+    "source_hash": "yt_9-Jl0dxWQs8",
+    "status": "indexed",
+    "frame_count": 150,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  },
+  {
+    "id": "yt_GlYgs6v2YfU",
+    "source": "youtube",
+    "url": "https://youtu.be/GlYgs6v2YfU",
+    "title": "But what is cross-entropy? | Compression is Intelligence Part 2",
+    "source_hash": "yt_GlYgs6v2YfU",
+    "status": "indexed",
+    "frame_count": 226,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  },
+  {
+    "id": "yt_iv-5mZ_9CPY",
+    "source": "youtube",
+    "url": "https://youtu.be/iv-5mZ_9CPY",
+    "title": "But how do AI images and videos actually work? | Guest video by Welch Labs",
+    "source_hash": "yt_iv-5mZ_9CPY",
+    "status": "indexed",
+    "frame_count": 209,
+    "embed_version": "clip-ViT-L-14-v1",
+    "diarize": false,
+    "transcript_note": null
+  }
+]

@@ -95,8 +95,11 @@ def _thumb_url(user_id: str, video_id: str, idx: int) -> str:
     """Browser-facing thumbnail URL. Presigned GET straight to the bucket when
     the provider supports it (an <img> tag can't send auth headers); the API
     serves the bytes itself only in local-dev mode."""
-    if storage.presign_capable():
-        return storage.presign_get(storage.frame_key(user_id, video_id, idx))
+    key = storage.frame_key(user_id, video_id, idx)
+    # presign_capable(key) is False for a sample: its frames live in
+    # demo_corpus/, on this disk, so there is no bucket object to sign.
+    if storage.presign_capable(key):
+        return storage.presign_get(key)
     return f"/api/frame/{video_id}/{idx:06d}.jpg?u={user_id}"
 
 

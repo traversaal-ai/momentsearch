@@ -245,10 +245,12 @@ ls -la ~/momentsearch/.env      # should show the file with a real size (not mis
 
 ```bash
 docker compose up -d --build
-docker compose logs -f seed        # wait for "sample corpus complete"
+docker compose logs -f seed        # wait for "10 videos ready"
 ```
 
-The first run takes a few minutes (it downloads the model and indexes a sample video).
+The first run takes a few minutes (it downloads the CLIP model). The ten demo
+videos are not indexed — they load from `demo_corpus/`, which lives in the repo,
+not in the image. See **The demo on a cloud deploy** in DEPLOYMENT.md.
 
 **6. 💻 On your computer — open** `http://YOUR_VM_IP:8000/` in a browser. `YOUR_VM_IP` is the VM's external IP — get it with `gcloud compute instances list`.
 

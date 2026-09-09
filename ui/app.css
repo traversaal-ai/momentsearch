@@ -431,3 +431,100 @@ body[data-ans="1"] #answer{flex:0 0 auto}
   font-size:10px;font-weight:700;line-height:1.6;white-space:nowrap;flex:none}
 .spk-on{color:#B8452C;background:#FBEDE9}
 .spk-off{color:#8A8175;background:#F1ECE2}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE CORPUS: strip, slider, drawer
+   The demo used to be one video, so the hero could just show it. It is ten now,
+   and a hero that shows one of ten silently under-sells the corpus — the whole
+   claim is that a question is answered ACROSS videos. These three pieces say so
+   without pushing the ask box off the screen: the strip proves the corpus exists
+   in one line, the slider shows the videos themselves, and the drawer is where
+   you actually browse them.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ---- strip: the whole corpus as one line ---- */
+.cstrip{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}
+.cstrip[hidden]{display:none}
+.cstrip-thumbs{display:flex;align-items:center}
+.cstrip-thumbs img{width:30px;height:30px;border-radius:9999px;object-fit:cover;
+  border:2px solid #FBF7F0;background:#F3ECE0;margin-left:-9px}
+.cstrip-thumbs img:first-child{margin-left:0}
+.cstrip-more{margin-left:-9px;width:30px;height:30px;border-radius:9999px;flex:none;
+  border:2px solid #FBF7F0;background:#F3ECE0;color:#6B6357;font-size:10px;font-weight:700;
+  display:flex;align-items:center;justify-content:center}
+.cstrip-btn{color:#E8472B;font-weight:600;background:none;border:0;padding:0;cursor:pointer}
+.cstrip-btn:hover{text-decoration:underline}
+
+/* ---- slider: the hero still, once per video ----
+   One viewport, one track, N slides — transform, not scroll, so a drag can be
+   followed pixel-for-pixel and released into a settled position. The track is
+   the ONLY thing that moves; the frame around it (border, shadow, glow) belongs
+   to the viewport so it doesn't slide away with the picture. */
+.cslider{position:relative;width:300px}
+@media (min-width:640px){.cslider{width:360px}}
+@media (min-width:1024px){.cslider{width:400px}}
+.cslider-view{position:relative;overflow:hidden;border-radius:1rem;border:1px solid #E7DECF;
+  background:#F3ECE0;box-shadow:0 24px 60px -24px rgba(30,27,22,.45);
+  touch-action:pan-y}            /* vertical scroll stays the page's, horizontal is ours */
+.cslider-track{display:flex;will-change:transform}
+.cslider-track.anim{transition:transform .42s cubic-bezier(.22,.68,.36,1)}
+.cslide{position:relative;flex:0 0 100%;display:block;border:0;padding:0;margin:0;
+  background:none;cursor:pointer;font-family:inherit}
+.cslide img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;
+  background:#F3ECE0;-webkit-user-drag:none;user-select:none}
+.cslide-veil{position:absolute;inset:0;background:rgba(30,27,22,.10);transition:background .2s ease}
+.cslide:hover .cslide-veil{background:rgba(30,27,22,.25)}
+.cslide-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.cslide-play span{width:3.5rem;height:3.5rem;border-radius:9999px;background:rgba(255,255,255,.95);
+  color:#E8472B;box-shadow:0 10px 15px -3px rgba(0,0,0,.1);display:flex;align-items:center;
+  justify-content:center;font-size:1.125rem;padding-left:2px;transition:transform .2s ease,background .2s ease,color .2s ease}
+.cslide:hover .cslide-play span{background:#FF5A3C;color:#fff;transform:scale(1.1)}
+/* The index, so "1 / 10" answers "how many of these are there" from the picture
+   itself rather than only from the strip above it. */
+.cslider-count{position:absolute;right:.5rem;bottom:.5rem;z-index:2;
+  background:rgba(30,27,22,.72);color:#fff;font-size:11px;font-weight:600;
+  border-radius:9999px;padding:2px 8px;letter-spacing:.02em;pointer-events:none}
+/* Arrows sit ON the frame edges: outside it they'd collide with the ask box on
+   the left and the page edge on the right at lg. */
+.cslider-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:3;
+  width:2rem;height:2rem;border-radius:9999px;border:1px solid #E7DECF;background:rgba(251,247,240,.92);
+  color:#1E1B16;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  box-shadow:0 2px 8px rgba(30,27,22,.18);transition:background .15s ease,color .15s ease}
+.cslider-arrow:hover{background:#FF5A3C;color:#fff;border-color:#FF5A3C}
+.cslider-prev{left:.4rem}
+.cslider-next{right:.4rem}
+.cslider-dots{display:flex;justify-content:center;gap:.3rem;margin-top:.6rem;flex-wrap:wrap}
+.cdot{width:7px;height:7px;border-radius:9999px;border:0;padding:0;background:#DCD5C7;cursor:pointer;
+  transition:background .15s ease,width .15s ease}
+.cdot:hover{background:#B9AF9C}
+.cdot[aria-current="true"]{background:#FF5A3C;width:18px}
+/* The auto-advance is a hint, not a countdown clock: a hairline that fills the
+   dwell, so the movement is explained before it happens instead of surprising
+   you mid-read. It is removed outright when the slider is paused or when the
+   viewer asked for less motion. */
+.cslider-progress{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(30,27,22,.10);z-index:2}
+.cslider-progress i{display:block;height:100%;width:0;background:#FF5A3C}
+.cslider-progress.run i{animation:cslide-fill var(--dwell,6s) linear forwards}
+@keyframes cslide-fill{from{width:0}to{width:100%}}
+@media (prefers-reduced-motion:reduce){
+  .cslider-track.anim{transition:none}
+  .cslider-progress{display:none}
+}
+
+/* ---- drawer: browse every video ----
+   An overlay panel, not an inline list: the corpus is ten rows and the hero is
+   already full, so anything inline pushes the ask box below the fold. Fixed
+   position means the page behind it doesn't move at all. */
+.drawer{position:fixed;inset:0;z-index:60}
+.drawer[hidden]{display:none}
+.drawer-scrim{position:absolute;inset:0;background:rgba(30,27,22,.5)}
+.drawer-panel{position:absolute;top:0;right:0;height:100%;width:min(26rem,100%);
+  background:#FBF7F0;border-left:1px solid #E7DECF;box-shadow:-24px 0 60px -24px rgba(30,27,22,.45);
+  display:flex;flex-direction:column;animation:drawer-in .22s ease both}
+@keyframes drawer-in{from{transform:translateX(100%)}to{transform:none}}
+@media (prefers-reduced-motion:reduce){.drawer-panel{animation:none}}
+.v-row{appearance:none;font-family:inherit;display:flex;gap:.7rem;width:100%;text-align:left;
+  background:none;border:0;border-radius:10px;padding:.5rem;cursor:pointer}
+.v-row:hover{background:#F3ECE0}
+.v-row[aria-current="true"]{background:#F3ECE0;box-shadow:inset 0 0 0 1px #E7DECF}
+.v-row img{width:72px;height:41px;border-radius:6px;object-fit:cover;background:#F3ECE0;flex:none}

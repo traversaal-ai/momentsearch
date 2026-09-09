@@ -310,7 +310,12 @@ function statusBadge(v){
   const pct = v.progress ? ` ${Math.round(v.progress*100)}%` : "";
   switch(v.status){
     case "indexed": {
-      const t = ingestDur(v);
+      // How long it took is feedback about THIS machine's work, so it belongs to
+      // a video the user added and watched go through. The samples ship
+      // pre-indexed (demo_corpus/, restored at startup), so their timestamps are
+      // the build machine's clock — a stopwatch reading from someone else's
+      // computer, which tells a visitor nothing true.
+      const t = v.is_sample ? "" : ingestDur(v);
       return {icon:"✓", label:`${v.frame_count||0} frames · ${src}${t?` · indexed in ${t}`:""}`, c:"text-[#1f7a43]"};
     }
     case "pending":   return {icon:"◷", label:"waiting (fair queue)", c:"text-[#8a6d1a]"};

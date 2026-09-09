@@ -304,11 +304,15 @@ def transcript(video_id: str, uid: str = Depends(user_id_dep)):
 
 @router.get("/api/frame/{video_id}/{name}")
 def frame(video_id: str, name: str, u: str | None = None):
-    if storage.presign_capable():
-        raise HTTPException(404, "Thumbnails are served from object storage.")
     if not _FRAME_RE.match(name):
         raise HTTPException(404, "Frame not found.")
-    fp = storage.local_path(storage.frame_prefix(_uid(u), video_id) + name)
+    key = storage.frame_prefix(_uid(u), video_id) + name
+    # Not gated on the provider any more: a SAMPLE's frames are on this disk
+    # (demo_corpus/) even when everything else lives in a bucket, so the route
+    # has to answer for them. presign_capable(key) is per-key and says so.
+    if storage.presign_capable(key):
+        raise HTTPException(404, "Thumbnails are served from object storage.")
+    fp = storage.local_path(key)
     if not fp.exists():
         raise HTTPException(404, "Frame not found.")
     return FileResponse(fp, media_type="image/jpeg",

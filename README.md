@@ -31,7 +31,7 @@
   <img width="880" alt="Typing “how does an LLM predict the next word?”, the six pipeline stages ticking over, then a cited answer streaming in above the matched moments" src="docs/media/demo-ask.gif">
 </p>
 
-<p align="center"><sub><b>One question → both branches searched → a cited answer.</b> Recorded on the pre-indexed sample, ~1.4× speed.</sub></p>
+<p align="center"><sub><b>One question → both branches searched → a cited answer.</b> Recorded on the pre-indexed demo corpus, ~1.4× speed.</sub></p>
 
 Upload videos or paste YouTube URLs. Background workers sample keyframes, dedup, embed and index them in [Qdrant](https://qdrant.tech). Ask a question and MomentSearch retrieves the best-matching moments, then has a vision LLM read those frames and write a cited answer — or abstain when the evidence isn't there. It's **visual-first and multimodal**: the frame branch searches what's on screen, the transcript branch searches what's said, and the two are fused into one ranked set of moments.
 
@@ -161,7 +161,7 @@ Leave that command **running** — it's the app; `Ctrl+C` stops it, and `docker 
 
 ## Step 5 — Wait for the "UP" banner, then open the app
 
-**First run takes a few minutes** (the first `docker build` also downloads PyTorch). A one-shot `seed` step then downloads the CLIP model and indexes the sample video *before* `api`/`worker` start, so **`http://localhost:8000` won't answer until seeding finishes** — that's expected, not a hang. Watch progress with `docker compose logs -f`; **you'll know it's ready when the logs print:**
+**Nothing is indexed at startup.** Ten 3Blue1Brown videos ship pre-indexed in `demo_corpus/` — frames, vectors and rows — so the demo is ready the moment the app is. A one-shot `seed` step loads them (a second) and waits for the CLIP model, then `api` starts. First run is slower only because `docker build` downloads PyTorch and the model (~1.7GB, once). Watch it with `docker compose logs -f`; **it's ready when the logs print:**
 
 ```
 ================================================================
@@ -169,18 +169,57 @@ Leave that command **running** — it's the app; `Ctrl+C` stops it, and `docker 
 ================================================================
 ```
 
-Then open **http://localhost:8000**. Later runs find the sample already indexed and start in seconds. No LLM key is fine — retrieval still returns ranked, clickable moments (the UI badge reads "No LLM — moments only"); add `LLM_PROVIDER` + a key when you want prose.
+Then open **http://localhost:8000**. Later runs start in under a minute. No LLM key is fine — retrieval still returns ranked, clickable moments (the UI badge reads "No LLM — moments only"); add `LLM_PROVIDER` + a key when you want prose.
+
+**Using it from your own code or UI.** Everything the app does goes through a plain HTTP API on the same port: add a video, poll its status, ask a question (with a streaming variant), read the cited moments. **[API.md](API.md)** documents every endpoint with its request and response fields, which source file owns it, and a short guide to building your own frontend or scripting a workflow against it. A live Swagger page is at `http://localhost:8000/docs`.
 
 ## Without Docker
 
-Four processes, each in its own terminal:
+Use this if you'd rather run plain `python` (hacking on the code, or you already run Postgres and Qdrant). Docker does all of the below for you; here you provide the pieces yourself. Same five ideas as above, just by hand.
+
+**1. Install the system pieces**
+
+- **Python 3.11+**
+- **ffmpeg** and **Node.js** on your `PATH` — ffmpeg samples the frames; yt-dlp needs Node to read YouTube.
+  - Windows: `winget install Gyan.FFmpeg` then `winget install OpenJS.NodeJS.LTS` · macOS: `brew install ffmpeg node` · Ubuntu/Debian: `sudo apt install ffmpeg nodejs`
+- **Postgres** — a free [Neon](https://neon.com) database (nothing to install), or a local one: see the Postgres box in Step 1 for install + `createdb ms`.
+- **Qdrant** — a free [Qdrant Cloud](https://cloud.qdrant.io) cluster (nothing to install; copy its URL and API key), or a local binary from [Qdrant's releases](https://github.com/qdrant/qdrant/releases) run as `./qdrant` (listens on `6333`).
+
+**2. Get the code and install the Python deps**
 
 ```bash
-uvicorn src.app:app --port 8000            # API + UI
-python -m src.worker                       # ingest worker
-uvicorn src.clip_service:app --port 8001   # CLIP service (optional — unset EMBED_SERVICE_URL to embed in-process)
-python -m src.seed                         # one-shot: index the sample
+git clone https://github.com/traversaal-ai/momentsearch.git
+cd momentsearch
+cp .env.local.example .env
+python -m venv .venv && source .venv/bin/activate            # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU torch for the local CLIP model
+pip install -r requirements-clip.txt
 ```
+
+**3. Point `.env` at your services.** The preset uses Docker hostnames (`postgres`, `qdrant`); replace them, and add the two `DEMO_*` lines so the demo corpus has somewhere to load its vectors:
+
+```bash
+DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/ms   # or your Neon URL
+QDRANT_URL=http://localhost:6333                                     # or your Qdrant Cloud URL
+QDRANT_API_KEY=                                                      # your cloud key, if any
+DEMO_QDRANT_URL=http://localhost:6333                                # same value as QDRANT_URL
+DEMO_QDRANT_API_KEY=                                                 # same value as QDRANT_API_KEY
+```
+
+Then add the two keys from Step 3 (Prefect, OpenAI). Leave `EMBED_SERVICE_URL` unset so CLIP runs inside the API and worker processes; `COMPOSE_PROFILES` is ignored outside Docker, and you can comment out `DEPLOY_ENV` to silence the local-settings warning at startup.
+
+**4. Start it** — from the repo folder with the venv active, each in its own terminal, in this order:
+
+```bash
+python -m src.seed                 # once per fresh database: loads the ten demo videos (rows + vectors), then exits
+uvicorn src.app:app --port 8000    # API + UI  →  http://localhost:8000
+python -m src.worker               # ingest worker — needs the Prefect key, only for adding your own videos
+```
+
+The first start downloads the CLIP model (~1.7GB) and the reranker (~90MB) into your Hugging Face cache; later starts are quick. Open **http://localhost:8000** — the ten demo videos answer straight away, and `python -m src.providers` tells you what your `.env` actually resolved to if something is off.
+
+**5. Optional — CLIP as its own process.** So the API and worker don't each load the model, run `uvicorn src.clip_service:app --port 8001` in a fourth terminal and set `EMBED_SERVICE_URL=http://localhost:8001` in `.env`.
 
 ## Troubleshooting
 
@@ -211,7 +250,7 @@ Copy `.env.example` (the full, inline-documented reference) and set what you nee
 | `ASR_PROVIDER` | speech-to-text for uploaded videos (default `openai` / Whisper). |
 | `GEMINI_API_KEY` | required for speaker recognition ("who said what"). |
 
-**Feature flags:** `ENABLE_TRANSCRIPT` (the transcript branch), `ENABLE_RERANK` (reranker), `MULTI_QUERY` (split a multi-part question and search each part in parallel), `DIARIZE_ENABLED` (speaker recognition master switch), `SEED_SAMPLE_VIDEOS` (index the sample talk on startup).
+**Feature flags:** `ENABLE_TRANSCRIPT` (the transcript branch), `ENABLE_RERANK` (reranker), `MULTI_QUERY` (split a multi-part question and search each part in parallel), `DIARIZE_ENABLED` (speaker recognition master switch), `DEMO_LOCAL` (read the ten demo videos from `demo_corpus/` — off means host them yourself, which re-indexes them).
 
 ### YouTube ingest
 
@@ -267,61 +306,71 @@ A residential IP gets past the datacenter-IP block with no cookies to refresh �
 
 # Architecture
 
-**The design rule: stateful = rented managed service, stateless = this repo.** Every API box and worker is disposable; durable state lives in object storage, Qdrant and Postgres. Two paths scale in opposite directions and never share a request — the **write path** (slow, background; the API answers `202` instantly and workers do the work) and the **read path** (fast; retrieval is milliseconds, the LLM call dominates cost).
+**The design rule: stateful = rented managed service, stateless = this repo.** Every API box and worker is disposable; durable state lives in object storage, Qdrant and Postgres. One deliberate exception: the ten-video demo corpus ships *in the repo*, pre-indexed, with its own bundled Qdrant, so a fresh clone answers questions before anything is uploaded or paid for. Two paths scale in opposite directions and never share a request — the **write path** (slow, background; the API answers `202` instantly and workers do the work) and the **read path** (fast; retrieval is a couple of seconds and free, the LLM call is the paid step).
 
 ```mermaid
 flowchart LR
   user(["Browser / UI"])
 
-  subgraph repo["MomentSearch — one Docker image, stateless (this repo)"]
+  yt(["YouTube"])
+
+  subgraph repo["MomentSearch — one Docker image (this repo)"]
     direction TB
     api["API<br/>presign · register · /ask · UI"]
     disp["WFQ dispatcher<br/>fair round-robin across users"]
-    worker["Worker(s)<br/>fetch · sample · dedup · embed · transcript"]
+    worker["Worker(s)<br/>fetch · sample · dedup · embed · transcript · speakers"]
     clip["CLIP service<br/>one warm model (CPU → GPU)"]
+    gate["Startup gate (seed)<br/>restores the demo corpus, then exits"]
+    demo[("demo_corpus/ + bundled Qdrant<br/>10 videos pre-indexed, shipped")]
   end
 
   subgraph managed["Managed services — stateful (rented)"]
     direction TB
     obj[("Object storage<br/>S3 / GCS / Tigris")]
-    pg[("Neon Postgres<br/>manifest · status · hashes")]
+    pg[("Neon Postgres<br/>manifest · status · sessions")]
     prefect[("Prefect Cloud<br/>queue · retries · dashboard")]
     qdrant[("Qdrant Cloud<br/>moments_l14 + moments_text_openai")]
-    vlm[("Vision LLM<br/>OpenAI · vLLM · Anthropic")]
+    vlm[("Vision LLM<br/>OpenAI · Gemini · Anthropic · vLLM")]
   end
 
   %% write path
   user -->|"① presign"| api
   user -->|"② PUT bytes"| obj
-  user -->|"③ register"| api
+  user -->|"③ register: file or YouTube URL"| api
   api -->|"pending row"| pg
   api -->|"enqueue"| disp
   disp -->|"admit ≤ MAX_INFLIGHT"| prefect
   prefect -->|"run"| worker
-  worker -->|"download / thumbs"| obj
+  yt -->|"SocialKit API or yt-dlp"| worker
+  worker -->|"download · thumbs · transcript.json"| obj
   worker -->|"embed batches"| clip
   worker -->|"upsert vectors"| qdrant
   worker -->|"status"| pg
 
+  %% demo corpus
+  gate -->|"rows"| pg
+  gate -->|"vectors, once"| demo
+
   %% read path
   user -->|"ask"| api
-  api -->|"embed query"| clip
+  api -->|"split? · embed query"| clip
   api -->|"kNN · both branches"| qdrant
-  api -->|"frames + transcript"| vlm
+  api -->|"samples' kNN + frames"| demo
+  api -->|"moments + context"| vlm
 
   classDef repoN fill:#fff3ec,stroke:#e2683c,color:#7a2f14;
   classDef mgmtN fill:#eef4ff,stroke:#3b6ea8,color:#173a63;
-  class api,disp,worker,clip repoN;
+  class api,disp,worker,clip,gate,demo repoN;
   class obj,pg,prefect,qdrant,vlm mgmtN;
 ```
 
-It's **one Docker image** with four entrypoints — the API, the ingest worker, the CLIP service, and a one-shot seed gate. All Python lives under [`src/`](src/).
+It's **one Docker image** with four entrypoints — the API, the ingest worker, the CLIP service, and a one-shot startup gate. All Python lives under [`src/`](src/).
 
-**Write path — upload to searchable vectors.** The browser presigns (`POST /api/videos/presign`), PUTs the file straight to the bucket, then registers it (`POST /api/videos`); the API HEAD-verifies the object, writes a `pending` row, schedules a Prefect run and returns `202`. A worker then fetches and hashes the source (duplicates are skipped), samples keyframes with one ffmpeg pass, dedups near-identical frames, embeds the survivors and upserts them to the visual collection with deterministic IDs, and transcribes the audio (or reads YouTube captions) into the transcript collection. Poll `GET /api/videos` until `indexed`.
+**Write path — upload to searchable vectors.** The browser presigns (`POST /api/videos/presign`), PUTs the file straight to the bucket, then registers it (`POST /api/videos`, which also takes a YouTube URL); the API HEAD-verifies the object, writes a `pending` row, hands it to the fair dispatcher and returns `202`. A worker then fetches the source (YouTube via the SocialKit API or yt-dlp) and hashes it (duplicates are skipped), samples keyframes with one ffmpeg pass, dedups near-identical frames, embeds the survivors and upserts them to the visual collection with deterministic IDs, then indexes the speech: YouTube captions or Whisper for uploads, optionally labelled by speaker with Gemini, in ~20s chunks in the transcript collection. Poll `GET /api/videos` until `indexed`.
 
-**Read path — question to answer-or-abstain.** `POST /api/ask` embeds the question into **both** branches in parallel (no query router), fuses the hits by rank (RRF), collapses same-instant frame+transcript hits into single moments with a cross-modal boost, and reranks. A **confidence gate** on the raw per-branch bests abstains — with no LLM call — when neither what's on screen nor what's said clears its threshold. Otherwise the top moments' frames and transcript excerpts go to the vision LLM, which answers only from them and cites `[n]`; invented citations are stripped and timestamps come from the payload, never the LLM. `POST /api/sessions/{id}/ask_stream` reports each stage (`embedding → searching → ranking → reading → answering`) over Server-Sent Events.
+**Read path — question to answer-or-abstain.** `POST /api/ask` first asks the answer model, in parallel with retrieval, whether the question has several parts, and splits it if so (each part is then retrieved in parallel). It embeds the question into **both** branches (no query router), fuses the hits by rank (RRF), collapses same-instant frame+transcript hits into single moments with a cross-modal boost, and reranks. A **confidence gate** on the raw per-branch bests abstains — with no LLM call — when neither what's on screen nor what's said clears its threshold. Otherwise the top moments' frames, transcript excerpts and the speech around each go to the vision LLM, which answers every part only from them and cites `[n]`; invented citations are stripped and timestamps come from the payload, never the LLM. `POST /api/ask_stream` and its session twin report each stage (`embedding → searching → ranking → [splitting → parts] → reading → answering`) over Server-Sent Events.
 
-> Deeper internals — Qdrant at frame scale, "embedding is a URL", fair scheduling (WFQ), the full read path and the stage-by-stage pipeline tables — are in **[ARCHITECTURE.md](ARCHITECTURE.md)**. The HTTP endpoints are in **[API.md](API.md)**.
+> Deeper internals — Qdrant at frame scale, "embedding is a URL", fair scheduling (WFQ), the full read path and the stage-by-stage pipeline tables — are in **[ARCHITECTURE.md](ARCHITECTURE.md)**. Every HTTP endpoint, its fields, and how to drive the app from your own UI or scripts are in **[API.md](API.md)**.
 
 ---
 
@@ -331,7 +380,7 @@ One neutral Docker image with four entrypoints (`api`, `worker`, `clip`, one-sho
 
 - **Fat** (default, `docker build .`) — bundles the local CLIP model; one image runs api + worker + clip and embeds in-process. Simplest deploy.
 - **Slim** (`docker build --build-arg WITH_TORCH=false .`) — no local model; api + worker send embedding to a separate CLIP service via `EMBED_SERVICE_URL`. Use it when embedding is the bottleneck or you want CLIP on a GPU (build the service from `Dockerfile.clip`; `fly.slim.toml` runs the slim app with CLIP on an external GPU host).
-- **Seed** — a one-shot service indexes the sample talk before `api`/`worker` start, so the first request to `/demo` already has something to answer (`SEED_SAMPLE_VIDEOS=false` skips it).
+- **Seed** — a one-shot service loads the shipped demo corpus before `api`/`worker` start, so the first request to `/demo` already has ten videos to answer from. It indexes nothing (`SEED_MODE=ingest` if you want it to).
 
 Step-by-step per platform → **[Fly](deployment_docs/fly.md)** · **[AWS](deployment_docs/aws.md)** · **[Google Cloud](deployment_docs/gcp.md)** (index: [DEPLOYMENT.md](DEPLOYMENT.md)).
 

@@ -256,7 +256,9 @@ Check the box without a key set → the API rejects it (*"Gemini key is missing"
 - **Switching provider/model changes the vector dimension.** The old index
   becomes unusable and MomentSearch refuses to mix them — point that branch's
   collection (`IMAGE_COLLECTION` / `TEXT_COLLECTION`) at a fresh name and
-  re-ingest (`python -m src.seed`).
+  re-ingest your videos. The ten demo videos are unaffected: they ship
+  pre-embedded in `demo_corpus/` and are read from there (`DEMO_LOCAL`). To
+  rebuild them on a new model: `python -m src.build_demo_corpus`.
 - **The two branches are independent** — mix freely (e.g. local CLIP frames +
   hosted OpenAI transcripts).
 - `LLM_API_KEY` (generic) **overrides** the provider-specific LLM key — a

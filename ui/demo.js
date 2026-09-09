@@ -4,10 +4,11 @@
  * Anonymous callers are the default tenant, which OWNS the samples, so no
  * sign-in is needed to search them.
  *
- * The page is one screen: the video on the right of the hero, the ask box on
- * the left, and everything the server does to answer laid out as a trace of
- * pills. There is deliberately no recent-questions strip — one answer is on
- * screen at a time and asking again replaces it.
+ * The page is one screen: the corpus on the right of the hero — a slider that
+ * cycles the ten videos and can be dragged, with a strip and a browse drawer
+ * beside it — the ask box on the left, and everything the server does to answer
+ * laid out as a trace of pills. There is deliberately no recent-questions strip
+ * — one answer is on screen at a time and asking again replaces it.
  */
 let CITES=[], SAMPLE_IDS=[], SAMPLE_NAME="the video";
 
@@ -29,12 +30,16 @@ function shortName(t){
    fixed words: .mark is white-space:nowrap and its nib and underline are sized
    to one line, so a wrapping title can't carry the pen. The name sits on its
    own line at a size that survives a long one. */
-function writeTitle(name){
+function writeTitle(name, tail){
   const pen = `<span class="word" style="--i:1"><span class="mark text-coral"><span class="ink">hard question</span><i class="nib" aria-hidden="true"></i>${UNDERLINE}</span></span>`;
+  // Only the NAME is quoted. "3Blue1Brown videos" inside the quotes reads as the
+  // title of something; the quotes belong around what the thing is called, and
+  // the common noun after them belongs to our own sentence.
+  const named = `<span class="text-ink">“${esc(name)}”</span>${tail?` ${esc(tail)}`:""}`;
   $("#heroTitle").innerHTML =
     `<span class="word" style="--i:0">Ask a</span> ${pen}<br>`
-    + `<span class="word block text-2xl sm:text-3xl mt-3 text-muted font-semibold leading-snug" style="--i:2">`
-    + `about <span class="text-ink">“${esc(name)}”</span></span>`;
+    + `<span class="word block text-2xl sm:text-3xl mt-2 text-muted font-semibold leading-snug" style="--i:2">`
+    + `about ${named}</span>`;
 }
 /* Written once, by loadSample() below, so the pen doesn't run twice: the h1's
    min-h holds its place for the one request it takes to learn the name. */
@@ -65,13 +70,9 @@ wireNav();   // top-right → the workspace
    hqdefault always does, so it's the fallback. */
 const ytOf = v => (v && v.id || "").startsWith("yt_") ? v.id.slice(3) : null;
 
-/* Nothing to play until /api/videos names the sample, so the still starts inert
-   and the badge only appears once there is a video behind it. */
-function noPlayback(){
-  $("#heroPlay").disabled=true;
-  $("#heroPlayBadge").classList.add("hidden");
-}
-noPlayback();
+/* Every slide IS a play button — it opens the same player modal a citation
+   opens, from 0:00. Playing needs no index, so it works even while a video is
+   still embedding. */
 
 /* Who made it and where it lives, said plainly and linked. We index public
    video, we don't host or own it: the creator gets their name (linked to their
@@ -100,9 +101,250 @@ function renderSource(v){
   p.classList.remove("hidden");
 }
 
-(async function loadSample(){
-  const img=$("#heroThumb"), name=$("#heroName"), sub=$("#heroSub");
+/* ══════════════════════════════════════════════════════════════════════════
+   THE CORPUS — strip, slider, drawer
+   Three views of one list (/api/videos, samples only). The strip proves the
+   corpus exists, the slider shows it, the drawer browses it. All three share
+   CORPUS and one notion of which video is showing (CUR), so picking a row in
+   the drawer moves the slider instead of opening a second, disagreeing view.
+   ══════════════════════════════════════════════════════════════════════════ */
+let CORPUS=[], CUR=0, AUTO=null, DRAGGING=false;
+const DWELL=6000;                       // ms a slide holds before the next one
+// REDUCED comes from common.js — both files are plain <script>s sharing ONE
+// global scope, so re-declaring a const here is a parse error that kills this
+// whole file silently.
+const ytThumb=(yid,size)=>`https://img.youtube.com/vi/${encodeURIComponent(yid)}/${size}.jpg`;
 
+/* ---------- slider ---------- */
+function renderSlides(){
+  const track=$("#sliderTrack");
+  track.innerHTML=CORPUS.map((v,i)=>{
+    const yid=ytOf(v);
+    // The first two stills are worth fetching eagerly; the rest are at most one
+    // drag away, and lazy keeps ten images off the critical path of a page whose
+    // job is to answer a question.
+    return `<button type="button" class="cslide" data-i="${i}" tabindex="${i===0?0:-1}"
+              aria-label="Play “${esc(v.title||v.id)}”">
+      <img ${i<2?"":'loading="lazy"'} alt="" src="${yid?esc(ytThumb(yid,"maxresdefault")):""}"
+        data-fallback="${yid?esc(ytThumb(yid,"hqdefault")):""}">
+      <span class="cslide-veil" aria-hidden="true"></span>
+      <span class="cslide-play" aria-hidden="true"><span>▶</span></span>
+    </button>`;
+  }).join("");
+  // maxres doesn't exist for every video; swap to hq once, never in a loop.
+  track.querySelectorAll("img").forEach(img=>{
+    img.onerror=()=>{ img.onerror=null; if(img.dataset.fallback) img.src=img.dataset.fallback; };
+  });
+  track.querySelectorAll(".cslide").forEach(el=>el.addEventListener("click",()=>{
+    if(DRAGGING) return;               // a drag that ends on a slide isn't a click
+    const v=CORPUS[+el.dataset.i];
+    if(v) openMoment([wholeVideo(v)], 0);
+  }));
+  $("#sliderDots").innerHTML=CORPUS.map((v,i)=>
+    `<button type="button" class="cdot" role="tab" data-i="${i}"
+       aria-label="Show ${esc(v.title||v.id)}" aria-current="${i===0}"></button>`).join("");
+  $("#sliderDots").querySelectorAll(".cdot").forEach(d=>
+    d.addEventListener("click",()=>{ go(+d.dataset.i); pause(); }));
+  const many=CORPUS.length>1;
+  $("#sliderPrev").hidden=!many; $("#sliderNext").hidden=!many;
+  $("#sliderCount").hidden=!many; $("#sliderProgress").hidden=!many||REDUCED;
+}
+
+/* The caption belongs to the slide: which of the ten you're looking at, its
+   state, and who made it. The HEADLINE deliberately doesn't move with it — see
+   the note in demo.html. */
+function paintCaption(v){
+  $("#heroName").textContent=v.title||v.id;
+  const b=statusBadge(v);
+  $("#heroSub").innerHTML = v.status==="indexed"
+    ? `${esc(b.label)}`
+    : `<span class="${b.c}">${b.icon} ${esc(b.label)}</span>`;
+  try{ renderSource(v); }catch(e){ console.warn("source line unavailable:",e); }
+}
+
+function go(i,{animate=true}={}){
+  if(!CORPUS.length) return;
+  CUR=(i%CORPUS.length+CORPUS.length)%CORPUS.length;
+  const track=$("#sliderTrack");
+  track.classList.toggle("anim",animate&&!REDUCED);
+  track.style.transform=`translateX(${-CUR*100}%)`;
+  $("#sliderCount").textContent=`${CUR+1} / ${CORPUS.length}`;
+  $("#sliderDots").querySelectorAll(".cdot").forEach((d,n)=>
+    d.setAttribute("aria-current",String(n===CUR)));
+  // Only the visible slide is tabbable — ten buttons in the tab order for one
+  // visible picture is its own kind of trap.
+  track.querySelectorAll(".cslide").forEach((el,n)=>{ el.tabIndex = n===CUR?0:-1; });
+  $("#vidList").querySelectorAll(".v-row").forEach(r=>
+    r.setAttribute("aria-current",String(+r.dataset.i===CUR)));
+  paintCaption(CORPUS[CUR]);
+  restartProgress();
+}
+
+/* Auto-advance. Off entirely under prefers-reduced-motion — a thing that moves
+   on its own is exactly what that setting asks us not to build. */
+function play(){
+  if(REDUCED||AUTO||CORPUS.length<2) return;
+  AUTO=setInterval(()=>{ if(!document.hidden) go(CUR+1); },DWELL);
+  restartProgress();
+}
+function pause(){
+  if(AUTO){ clearInterval(AUTO); AUTO=null; }
+  $("#sliderProgress").classList.remove("run");
+}
+function restartProgress(){
+  const el=$("#sliderProgress");
+  if(!AUTO||REDUCED){ el.classList.remove("run"); return; }
+  el.style.setProperty("--dwell",DWELL+"ms");
+  el.classList.remove("run"); void el.offsetWidth;   // restart the fill
+  el.classList.add("run");
+}
+
+function wireSlider(){
+  $("#sliderPrev").addEventListener("click",()=>{ go(CUR-1); pause(); });
+  $("#sliderNext").addEventListener("click",()=>{ go(CUR+1); pause(); });
+  const view=$("#sliderView");
+  // Reading the caption shouldn't have the picture change underneath you; same
+  // for tabbing into it.
+  view.addEventListener("mouseenter",pause);
+  view.addEventListener("mouseleave",play);
+  view.addEventListener("focusin",pause);
+  $("#heroSlider").addEventListener("keydown",e=>{
+    if(e.key==="ArrowLeft"){ e.preventDefault(); go(CUR-1); pause(); }
+    if(e.key==="ArrowRight"){ e.preventDefault(); go(CUR+1); pause(); }
+  });
+
+  /* Drag / swipe. Pointer events cover mouse, touch and pen in one path. The
+     track follows the finger 1:1 while down — a carousel that only jumps on
+     release feels broken on a touch screen — and settles on release: past a
+     tenth of the frame, or a flick, moves one slide. */
+  let x0=0, dx=0, w=0, down=false;
+  const track=$("#sliderTrack");
+  let captured=null;
+  view.addEventListener("pointerdown",e=>{
+    if(e.button!==undefined&&e.button!==0) return;
+    // The arrows live INSIDE the viewport, so a press on one is a press on the
+    // drag surface too. Leave those alone: capturing the pointer here retargets
+    // the click at the viewport, and the arrow never hears about it.
+    if(e.target.closest(".cslider-arrow")) return;
+    down=true; DRAGGING=false; x0=e.clientX; dx=0; w=view.clientWidth||1;
+    pause(); track.classList.remove("anim");
+  });
+  view.addEventListener("pointermove",e=>{
+    if(!down) return;
+    dx=e.clientX-x0;
+    if(Math.abs(dx)>4){
+      DRAGGING=true;
+      // Capture only once it IS a drag, so a plain click stays a click: capture
+      // makes every later event — including the click — target the viewport.
+      if(captured===null){ try{ view.setPointerCapture(e.pointerId); captured=e.pointerId; }catch(_){} }
+    }
+    // Resist at the ends rather than pulling into empty space.
+    const atEnd=(CUR===0&&dx>0)||(CUR===CORPUS.length-1&&dx<0);
+    track.style.transform=`translateX(calc(${-CUR*100}% + ${(atEnd?dx*0.35:dx)}px))`;
+  });
+  const release=()=>{
+    if(!down) return;
+    down=false;
+    if(captured!==null){ try{ view.releasePointerCapture(captured); }catch(_){} captured=null; }
+    const moved=Math.abs(dx)>Math.max(40,w*0.1);
+    go(moved ? (dx<0?CUR+1:CUR-1) : CUR);
+    // Clear the flag AFTER this turn of the loop, so the click that follows a
+    // drag is swallowed but the next real click is not.
+    setTimeout(()=>{ DRAGGING=false; },0);
+  };
+  view.addEventListener("pointerup",release);
+  view.addEventListener("pointercancel",release);
+  // A background tab shouldn't burn through the corpus unseen.
+  document.addEventListener("visibilitychange",()=>{ document.hidden ? pause() : play(); });
+}
+
+/* ---------- strip ---------- */
+function renderStrip(){
+  const n=CORPUS.length;
+  if(!n) return;
+  $("#cstrip-thumbs").innerHTML=CORPUS.slice(0,5).map(v=>{
+    const yid=ytOf(v);
+    return `<img loading="lazy" alt="" src="${yid?esc(ytThumb(yid,"default")):""}"
+      onerror="this.style.visibility='hidden'">`;
+  }).join("") + (n>5?`<span class="cstrip-more">+${n-5}</span>`:"");
+  const indexed=CORPUS.filter(v=>v.status==="indexed").length;
+  $("#cstrip-count").textContent = indexed===n
+    ? `${n} videos, all indexed`
+    : `${indexed} of ${n} videos indexed`;
+  $("#cstrip-open").textContent=`Browse all ${n} →`;
+  $("#vidDrawer-sub").textContent=`${n} videos, searched together. Click one to bring it into the frame.`;
+  $("#corpus-strip").hidden=false;
+}
+
+/* ---------- drawer ---------- */
+function renderList(){
+  const q=($("#vidFilter").value||"").toLowerCase().trim();
+  const rows=CORPUS.map((v,i)=>({v,i}))
+    .filter(({v})=>!q||`${v.title||""} ${v.author||""}`.toLowerCase().includes(q));
+  if(!rows.length){
+    $("#vidList").innerHTML=`<p class="px-2 py-6 text-[13px] text-muted">No video matches that.</p>`;
+    return;
+  }
+  $("#vidList").innerHTML=rows.map(({v,i})=>{
+    const yid=ytOf(v), b=statusBadge(v);
+    return `<button type="button" class="v-row" role="listitem" data-i="${i}"
+      aria-current="${i===CUR}" aria-label="Show “${esc(v.title||v.id)}”">
+      <img loading="lazy" alt="" src="${yid?esc(ytThumb(yid,"mqdefault")):""}"
+        onerror="this.style.visibility='hidden'">
+      <span class="min-w-0 flex-1" aria-hidden="true">
+        <span class="block text-[12.5px] font-semibold text-ink leading-snug line-clamp-2">${esc(v.title||v.id)}</span>
+        ${v.author?`<span class="block text-[11.5px] text-muted leading-snug mt-0.5">${esc(v.author)}</span>`:""}
+        <span class="block text-[10.5px] ${v.status==="indexed"?"text-muted":esc(b.c)} mt-1">${esc(b.label)}</span>
+      </span>
+    </button>`;
+  }).join("");
+  $("#vidList").querySelectorAll(".v-row").forEach(el=>el.addEventListener("click",()=>{
+    // Move the hero to it and close, rather than opening the player from in
+    // here: the drawer and the player modal are both modal, and stacking them
+    // nests two focus traps.
+    go(+el.dataset.i); pause(); closeDrawer();
+  }));
+}
+
+let _drawerTrigger=null;
+const _drawerBg=()=>[...document.body.children].filter(el=>el.id!=="vidDrawer"&&el.tagName!=="SCRIPT");
+function openDrawer(){
+  if(!CORPUS.length) return;
+  _drawerTrigger=document.activeElement;
+  renderList();
+  $("#vidDrawer").hidden=false;
+  document.body.style.overflow="hidden";
+  _drawerBg().forEach(el=>el.setAttribute("inert",""));
+  $("#vidFilter").focus();
+  document.addEventListener("keydown",trapDrawerTab);
+}
+function closeDrawer(){
+  if($("#vidDrawer").hidden) return;
+  $("#vidDrawer").hidden=true;
+  document.body.style.overflow="";
+  _drawerBg().forEach(el=>el.removeAttribute("inert"));
+  document.removeEventListener("keydown",trapDrawerTab);
+  if(_drawerTrigger&&_drawerTrigger.focus) _drawerTrigger.focus();
+  _drawerTrigger=null;
+}
+function trapDrawerTab(e){
+  if(e.key==="Escape"){ closeDrawer(); return; }
+  if(e.key!=="Tab") return;
+  const f=[...$("#vidDrawer").querySelectorAll('button,a[href],input,[tabindex]:not([tabindex="-1"])')]
+    .filter(el=>!el.disabled&&el.offsetParent!==null);
+  if(!f.length) return;
+  const first=f[0], last=f[f.length-1];
+  if(!$("#vidDrawer").contains(document.activeElement)){ e.preventDefault(); first.focus(); return; }
+  if(e.shiftKey&&document.activeElement===first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey&&document.activeElement===last){ e.preventDefault(); first.focus(); }
+}
+$("#cstrip-open").addEventListener("click",openDrawer);
+$("#vidDrawer-close").addEventListener("click",closeDrawer);
+$("#vidDrawer").querySelector("[data-drawer-close]").addEventListener("click",closeDrawer);
+$("#vidFilter").addEventListener("input",renderList);
+
+/* ---------- load ---------- */
+(async function loadCorpus(){
   // Only the request itself may claim the API didn't answer. Wrapping the whole
   // function in one catch meant ANY later slip — a helper missing from a cached
   // common.js — printed "The API didn't answer" over a hero that had already
@@ -112,8 +354,8 @@ function renderSource(v){
     ({videos}=await apiJSON("/api/videos"));
   }catch(e){
     writeTitle("the sample");
-    name.textContent="Couldn't load the sample";
-    sub.textContent="The API didn't answer.";
+    $("#heroName").textContent="Couldn't load the corpus";
+    $("#heroSub").textContent="The API didn't answer.";
     return;
   }
 
@@ -121,44 +363,37 @@ function renderSource(v){
   SAMPLE_IDS=shown.filter(v=>v.status==="indexed").map(v=>v.id);
   if(!shown.length){
     writeTitle("the sample");
-    name.textContent="The sample is still indexing";
-    sub.textContent="It seeds itself on first start. A few minutes, once.";
+    $("#heroName").textContent="The corpus is still loading";
+    $("#heroSub").textContent="It restores itself on first start.";
     return;
   }
 
-  // Identity: the headline, the still and the caption.
-  const v=shown[0], yid=ytOf(v);
-  SAMPLE_NAME=shortName(v.title||v.id);
-  writeTitle(SAMPLE_NAME);
-  if(yid){
-    img.src=`https://img.youtube.com/vi/${encodeURIComponent(yid)}/maxresdefault.jpg`;
-    img.onerror=()=>{ img.onerror=null; img.src=`https://img.youtube.com/vi/${encodeURIComponent(yid)}/hqdefault.jpg`; };
-  }
-  img.alt=v.title||v.id;
-  name.textContent=v.title||v.id;
-  // Say what state it's in rather than implying it's ready: a sample that is
-  // still embedding can't answer, and the badge is the only place that shows.
-  const b=statusBadge(v);
-  sub.innerHTML = v.status==="indexed"
-    ? `${esc(b.label)}`
-    : `<span class="${b.c}">${b.icon} ${esc(b.label)}</span>`;
+  // The featured video leads: the headline names it, so it has to be the first
+  // slide too, or the two contradict each other for the first six seconds.
+  // src/samples.py decides which one that is.
+  const fi=shown.findIndex(v=>v.is_featured);
+  CORPUS = fi>0 ? [shown[fi],...shown.slice(0,fi),...shown.slice(fi+1)] : shown;
 
-  // Extras, fenced off: the source link and turning the still into a play button
-  // are additions to a hero that is already correct without them, so they get
-  // their own failure. The still becomes the same player modal a citation opens
-  // — from 0:00, nothing matched — and playing needs no index, so it works even
-  // while the sample is still embedding.
-  try{
-    renderSource(v);
-    const play=$("#heroPlay");
-    play.disabled=false;
-    play.setAttribute("aria-label",`Play “${v.title||v.id}” from the start`);
-    $("#heroPlayBadge").classList.remove("hidden");
-    play.onclick=()=>openMoment([wholeVideo(v)], 0);
-  }catch(e){
-    console.warn("hero playback/source unavailable:", e);
-    noPlayback();
+  // The headline names the CORPUS, not one video in it. Ten videos are on the
+  // slider and a question reaches across all of them, so naming a single title
+  // undersold it — and it contradicted the frame the moment the slider moved on.
+  // One creator for all ten means their name IS the corpus; a mixed corpus falls
+  // back to counting.
+  const authors=[...new Set(CORPUS.map(v=>v.author).filter(Boolean))];
+  if(authors.length===1){
+    SAMPLE_NAME=`${authors[0]} videos`;      // what the ask box and errors call it
+    writeTitle(authors[0], "videos");        // …“3Blue1Brown” videos
+  }else{
+    SAMPLE_NAME = CORPUS.length>1 ? `these ${CORPUS.length} videos`
+                : shortName(CORPUS[0].title||CORPUS[0].id);
+    writeTitle(SAMPLE_NAME);
   }
+
+  renderSlides();
+  renderStrip();
+  go(0,{animate:false});
+  wireSlider();
+  play();
 })();
 
 /* ---------- ask ---------- */

@@ -22,19 +22,24 @@
 # fat (torch) regardless. Production/GPU builds the clip service from Dockerfile.clip
 # (see README "Split / GPU deployment"); locally the fat image serves clip fine.
 services:
-  # Local vector store — starts ONLY when .env has COMPOSE_PROFILES=local-qdrant
-  # (a compose profile). No uncommenting, no CLI flag: describe it in .env and
-  # `docker compose up` brings it up automatically. Data persists under
-  # ./data/qdrant, shared by api + worker + seed (unlike embedded single-process).
-  # Boots in ~1-2s, before the app makes its first Qdrant call, so no depends_on
-  # is needed. Cloud users don't set the profile, so this never runs for them.
+  # THE DEMO'S VECTOR STORE — always on, and deliberately not optional.
+  #
+  # Its storage IS ./demo_corpus/qdrant, the corpus that ships with the repo, so
+  # the ten sample videos are searchable the moment the stack is up: nothing is
+  # downloaded, nothing is embedded, nothing is billed. That is why this service
+  # has no profile any more. It used to be opt-in (COMPOSE_PROFILES=local-qdrant)
+  # back when it was just "Qdrant, but local"; now it is where the demo LIVES.
+  #
+  # Your own uploads do NOT have to come here: point QDRANT_URL at Qdrant Cloud
+  # (or anywhere) and they go there instead, while the samples keep answering
+  # from this one (config.DEMO_LOCAL, src/rag/vector_store.py::demo_split).
+  # Boots in ~1-2s, before the app's first Qdrant call, so no depends_on needed.
   qdrant:
     image: qdrant/qdrant:latest
-    profiles: ["local-qdrant"]
     ports:
       - "6333:6333"          # REST/gRPC — also opens the dashboard
     volumes:
-      - ./data/qdrant:/qdrant/storage
+      - ./demo_corpus/qdrant:/qdrant/storage
     restart: unless-stopped
 
   # Local manifest DB — starts ONLY when .env has local-postgres in
@@ -107,6 +112,7 @@ services:
       - ./src:/app/src            # live code — re-runs current seed logic on each `up`
       - ./.env:/app/.env:ro       # so load_dotenv() works in any subprocess (see config.py)
       - ./data:/app/data
+      - ./demo_corpus:/app/demo_corpus  # prebuilt corpus: frames, vectors, manifest.sql
       - ./secrets:/app/secrets:ro # YouTube cookies etc. — kept out of ./data (storage tree)
       - hf_cache:/root/.cache
     depends_on:
@@ -134,6 +140,7 @@ services:
       - ./ui:/app/ui              # live UI — edit the HTML/JS/CSS in ui/, just refresh
       - ./.env:/app/.env:ro       # so load_dotenv() works in any subprocess (see config.py)
       - ./data:/app/data          # STORAGE_PROVIDER=local only (dev)
+      - ./demo_corpus:/app/demo_corpus  # STORAGE_DIR — the shipped demo frames
       - hf_cache:/root/.cache
     depends_on:
       clip:
@@ -162,6 +169,7 @@ services:
       - ./src:/app/src            # live code — restart the worker to pick up changes
       - ./.env:/app/.env:ro       # so load_dotenv() works in the Prefect flow subprocess (see config.py)
       - ./data:/app/data
+      - ./demo_corpus:/app/demo_corpus  # STORAGE_DIR — the shipped demo frames
       - ./secrets:/app/secrets:ro # YouTube cookies etc. — kept out of ./data (storage tree)
       - hf_cache:/root/.cache
     depends_on:

@@ -199,7 +199,7 @@ fly secrets set STORAGE_PROVIDER=flyio
 fly deploy --ha=false
 ```
 
-This builds the app and starts it. The first time takes a few minutes (it also loads a sample video). When it finishes, open your site:
+This builds the app and starts it. The first time takes a few minutes. When it finishes, open your site:
 
 ```powershell
 fly open
@@ -228,7 +228,7 @@ Then upload a short video on the site to make sure storage and uploads work.
 - **"not authorized" when creating the app or bucket** → you used a deploy token. Make a normal token (Step 2).
 - **Upload fails in the browser (CORS error)** → the origin in Step 6 must match your address exactly (`https://` + name, no slash at the end).
 - **Uploads disappear after a restart** → `STORAGE_PROVIDER` is still `local`. Do Step 5.
-- **`/demo` page is empty** → the sample video didn't load (often missing YouTube cookies). Add `YT_COOKIES_B64` (Step 7) and deploy again.
+- **`/demo` page is empty** → the shipped corpus isn't in the image (see **The demo on a cloud deploy** in DEPLOYMENT.md). Either set `DEMO_LOCAL=false` + `SEED_MODE=ingest` to index the ten videos into your own stores — that needs `YT_COOKIES_B64` (Step 7) — or ship `demo_corpus/` yourself.
 - **YouTube links won't load** → add or refresh `YT_COOKIES_B64` (cookies expire in about 2–3 weeks). Uploaded files still work.
 
 ---

@@ -34,6 +34,8 @@ from .config import (
     STORAGE_PROVIDER,
     STORAGE_SECRET_ACCESS_KEY,
     gcs_service_account_info,
+    DEMO_DATA,
+    DEMO_LOCAL,
 )
 
 _client = None
@@ -98,8 +100,37 @@ def _gcs_bucket():
     return _client.bucket(STORAGE_BUCKET)
 
 
-def presign_capable() -> bool:
-    """Local disk can't mint URLs — the API falls back to direct upload/serving."""
+
+# ── Where a key actually lives ───────────────────────────────────────────────
+
+def _demo_key(key: str) -> bool:
+    """True for a key belonging to a shipped sample video.
+
+    Keys are `<user>/<video>/...`, so the video id is the second segment. The
+    samples are read from the repo folder no matter what STORAGE_PROVIDER says
+    (config.DEMO_LOCAL) — that is what lets someone run their own uploads on a
+    bucket while the demo stays a local, zero-cost, zero-setup thing."""
+    if not DEMO_LOCAL:
+        return False
+    from .samples import is_sample
+    parts = key.split("/")
+    return len(parts) > 1 and is_sample(parts[1])
+
+
+def _root(key: str) -> Path | None:
+    """The on-disk root for a key, or None when it belongs in the bucket.
+    Samples -> demo_corpus/objects; everything else -> ./data, but only when the
+    provider IS local."""
+    if _demo_key(key):
+        return DEMO_DATA
+    return DATA if STORAGE_PROVIDER == "local" else None
+
+def presign_capable(key: str | None = None) -> bool:
+    """Local disk can't mint URLs — the API falls back to direct upload/serving.
+    A sample key is always local (see _root), so it can never be presigned even
+    on a bucket deployment."""
+    if key is not None and _demo_key(key):
+        return False
     return STORAGE_PROVIDER != "local"
 
 
@@ -135,8 +166,9 @@ def presign_get(key: str, expires: int = PRESIGN_GET_EXPIRY_S) -> str:
 
 def head(key: str) -> dict | None:
     """Object metadata ({size, content_type}) or None — the post-upload check."""
-    if STORAGE_PROVIDER == "local":
-        p = DATA / key
+    root = _root(key)
+    if root is not None:
+        p = root / key
         return {"size": p.stat().st_size, "content_type": ""} if p.exists() else None
     if STORAGE_PROVIDER == "gcp_native":
         blob = _gcs_bucket().get_blob(key)
@@ -158,8 +190,9 @@ def exists(key: str) -> bool:
 # ── Bytes in / bytes out ─────────────────────────────────────────────────────
 
 def put_bytes(key: str, body: bytes, content_type: str = "application/octet-stream") -> str:
-    if STORAGE_PROVIDER == "local":
-        path = DATA / key
+    root = _root(key)
+    if root is not None:
+        path = root / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(body)
         return str(path)
@@ -171,8 +204,9 @@ def put_bytes(key: str, body: bytes, content_type: str = "application/octet-stre
 
 
 def get_bytes(key: str) -> bytes:
-    if STORAGE_PROVIDER == "local":
-        return (DATA / key).read_bytes()
+    root = _root(key)
+    if root is not None:
+        return (root / key).read_bytes()
     if STORAGE_PROVIDER == "gcp_native":
         return _gcs_bucket().blob(key).download_as_bytes()
     resp = _s3().get_object(Bucket=STORAGE_BUCKET, Key=key)
@@ -182,8 +216,9 @@ def get_bytes(key: str) -> bytes:
 def download_to(key: str, dest: Path) -> Path:
     """Stream an object to a local file (worker scratch) without buffering it all."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if STORAGE_PROVIDER == "local":
-        shutil.copyfile(DATA / key, dest)
+    root = _root(key)
+    if root is not None:
+        shutil.copyfile(root / key, dest)
     elif STORAGE_PROVIDER == "gcp_native":
         _gcs_bucket().blob(key).download_to_filename(str(dest))
     else:
@@ -192,8 +227,9 @@ def download_to(key: str, dest: Path) -> Path:
 
 
 def upload_file(path: Path, key: str, content_type: str = "application/octet-stream") -> str:
-    if STORAGE_PROVIDER == "local":
-        target = DATA / key
+    root = _root(key)
+    if root is not None:
+        target = root / key
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
         return str(target)
@@ -208,8 +244,9 @@ def upload_file(path: Path, key: str, content_type: str = "application/octet-str
 # ── Listing + batch delete (video lifecycle) ─────────────────────────────────
 
 def list_keys(prefix: str) -> list[str]:
-    if STORAGE_PROVIDER == "local":
-        base = DATA / prefix
+    root = _root(prefix if prefix.count("/") >= 2 else prefix + "/x")
+    if root is not None:
+        base = root / prefix
         if not base.exists():
             return []
         return [str(p.relative_to(DATA)).replace("\\", "/")
@@ -228,9 +265,9 @@ def delete_prefix(prefix: str) -> int:
     keys = list_keys(prefix)
     if not keys:
         return 0
-    if STORAGE_PROVIDER == "local":
+    if _root(keys[0]) is not None:
         for k in keys:
-            (DATA / k).unlink(missing_ok=True)
+            ((_root(k) or DATA) / k).unlink(missing_ok=True)
     elif STORAGE_PROVIDER == "gcp_native":
         from google.api_core.exceptions import NotFound
         bucket = _gcs_bucket()
@@ -260,8 +297,9 @@ def delete_prefix(prefix: str) -> int:
 
 
 def delete_key(key: str) -> None:
-    if STORAGE_PROVIDER == "local":
-        (DATA / key).unlink(missing_ok=True)
+    root = _root(key)
+    if root is not None:
+        (root / key).unlink(missing_ok=True)
     elif STORAGE_PROVIDER == "gcp_native":
         from google.api_core.exceptions import NotFound
         try:
@@ -273,5 +311,6 @@ def delete_key(key: str) -> None:
 
 
 def local_path(key: str) -> Path:
-    """Absolute path for the local provider (dev-only direct serving)."""
-    return DATA / key
+    """Absolute path for a key that lives on disk — the local provider, or a
+    shipped sample under demo_corpus/ regardless of provider."""
+    return (_root(key) or DATA) / key

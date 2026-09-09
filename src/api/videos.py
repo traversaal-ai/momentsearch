@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import config, db, jobs, setup_check, storage
-from ..samples import is_sample, sample_attribution
+from ..samples import is_featured, is_sample, sample_attribution
 from ..config import (
     ALLOWED_UPLOAD_TYPES,
     MAX_UPLOAD_MB,
@@ -236,6 +236,10 @@ def _public(row: dict) -> dict:
     # Samples are protected: unselectable-yes, deletable-no. The UI hides the ✕
     # on these and the delete endpoint refuses them.
     out["is_sample"] = is_sample(row["id"])
+    # Which sample /demo leads with. The hero names ONE video, and picking it
+    # here (from samples.py) keeps that choice with the corpus instead of the
+    # row order the list happens to come back in.
+    out["is_featured"] = is_featured(row["id"])
     # Creator credit — populated for the curated samples only (samples.py); None
     # for anything a user added, since ingest doesn't record the uploader.
     out.update(sample_attribution(row["id"]))

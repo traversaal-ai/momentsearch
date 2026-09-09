@@ -53,9 +53,12 @@
       <div id="heroBadge" class="rise inline-flex items-center gap-2 text-xs font-semibold text-coral2 bg-coral/10 border border-coral/25 rounded-full px-3 py-1 mb-5" style="--d:0">
         ● Pre-indexed sample · frame-by-frame and word-by-word
       </div>
-      <!-- min-h reserves the two lines demo.js writes once the sample is named,
-           so the hero doesn't jump when /api/videos answers. -->
-      <h1 id="heroTitle" class="display text-4xl sm:text-5xl font-bold leading-[1.05] tracking-tight min-h-[3.2em]"></h1>
+      <!-- min-h reserves the two lines demo.js writes once the corpus loads, so
+           the hero doesn't jump when /api/videos answers. It is measured, not
+           guessed: the two rendered lines come to ~1.9em of this font size, and
+           the old 3.2em left 62px of dead space under the text once the second
+           line got shorter — a hole between the headline and the paragraph. -->
+      <h1 id="heroTitle" class="display text-4xl sm:text-5xl font-bold leading-[1.05] tracking-tight min-h-[2em]"></h1>
       <p class="rise mt-4 text-lg text-muted max-w-xl leading-relaxed" style="--d:6">
         A cited answer, drawn from what's <b class="text-ink">shown on screen</b> and what's
         <b class="text-ink">said out loud</b>. Click any citation to pop up the video at
@@ -76,34 +79,47 @@
       </div>
 
       <div id="examples" class="rise mt-4 flex flex-wrap gap-2" style="--d:10"></div>
+
+      <!-- The corpus in one line: faces, a count, and the way in. Hidden until
+           /api/videos answers, because a "Browse all" button over a corpus that
+           hasn't loaded is a button that lies. The list itself is #vidDrawer, an
+           overlay, so it costs this hero no height at all. -->
+      <div id="corpus-strip" class="cstrip rise mt-5" style="--d:12" hidden>
+        <span id="cstrip-thumbs" class="cstrip-thumbs" aria-hidden="true"></span>
+        <span id="cstrip-count" class="text-[12.5px] text-muted"></span>
+        <button id="cstrip-open" type="button" class="cstrip-btn text-[12.5px]">Browse all →</button>
+      </div>
     </div>
 
+    <!-- THE CORPUS, AS THE HERO. One still showed one video; the demo has ten,
+         and the point of it is that a question reaches across all of them. So
+         the frame cycles through the corpus on its own, and you can take it
+         over: drag it, use the arrows, the dots, or the arrow keys. The
+         headline above stays fixed on the featured video — it names the
+         question you're being invited to ask, and a headline that reshuffled
+         itself every six seconds would be unreadable. -->
     <figure class="mx-auto lg:mx-0 w-fit text-center">
-      <div class="relative">
+      <div class="cslider" id="heroSlider">
         <div class="absolute -inset-2 rounded-3xl bg-coral/10 -z-10"></div>
-        <!-- The still is a play button: this is a video, so the first thing you
-             can do with it is watch it (demo.js opens the same player modal the
-             citations use, from 0:00, transcript beside it).
-
-             The box is 16:9, same as the still, so the frame is shown whole
-             instead of being cropped into a circle — a square crop of a
-             widescreen frame reads as a meaningless zoom. maxres is the clean
-             frame; hq is the fallback for videos without one (demo.js swaps it
-             on error) and object-cover trims its baked-in pillarbox. -->
-        <button id="heroPlay" type="button" title="Play the video"
-          class="group relative block rounded-2xl overflow-hidden border border-line bg-paper2 shadow-[0_24px_60px_-24px_rgba(30,27,22,.45)] focus:outline-none focus-visible:ring-4 focus-visible:ring-coral/30 disabled:cursor-default">
-          <img id="heroThumb" alt="" src="https://img.youtube.com/vi/LPZh9BOjkQs/maxresdefault.jpg"
-            class="block w-[300px] sm:w-[360px] lg:w-[400px] aspect-video object-cover transition duration-500 group-hover:scale-[1.04]">
-          <!-- The badge is always drawn, not revealed on hover: on a touch screen
-               there is no hover, and an invisible control is no control. -->
-          <span class="absolute inset-0 bg-ink/10 group-hover:bg-ink/25 transition" aria-hidden="true"></span>
-          <span class="absolute inset-0 flex items-center justify-center" aria-hidden="true">
-            <span id="heroPlayBadge" class="w-14 h-14 rounded-full bg-white/95 text-coral2 shadow-lg flex items-center justify-center text-lg pl-0.5 transition group-hover:bg-coral group-hover:text-white group-hover:scale-110">▶</span>
-          </span>
-        </button>
+        <div class="cslider-view" id="sliderView">
+          <!-- Slides are written by demo.js from /api/videos. The static first
+               slide is the featured video, so the hero is a picture and not an
+               empty box during the one request it takes to learn the corpus. -->
+          <div class="cslider-track" id="sliderTrack">
+            <span class="cslide">
+              <img src="https://img.youtube.com/vi/iv-5mZ_9CPY/maxresdefault.jpg" alt="">
+              <span class="cslide-veil" aria-hidden="true"></span>
+            </span>
+          </div>
+          <span id="sliderCount" class="cslider-count" hidden></span>
+          <div id="sliderProgress" class="cslider-progress" aria-hidden="true" hidden><i></i></div>
+          <button id="sliderPrev" class="cslider-arrow cslider-prev" type="button" aria-label="Previous video" hidden>‹</button>
+          <button id="sliderNext" class="cslider-arrow cslider-next" type="button" aria-label="Next video" hidden>›</button>
+        </div>
+        <div id="sliderDots" class="cslider-dots" role="tablist" aria-label="Choose a video"></div>
       </div>
-      <figcaption class="mt-4 text-sm max-w-[400px] mx-auto">
-        <span id="heroName" class="font-semibold text-ink block leading-snug">Loading the sample…</span>
+      <figcaption class="mt-3 text-sm max-w-[400px] mx-auto">
+        <span id="heroName" class="font-semibold text-ink block leading-snug">Loading the corpus…</span>
         <span id="heroSub" class="text-muted"></span>
         <!-- Provenance and credit: this app indexes public video, it doesn't host
              or own it. demo.js fills in the creator's name (linked to their
@@ -190,6 +206,29 @@
     </span>
   </div>
 </footer>
+
+<!-- BROWSE — every video in the corpus. Same contract as the player modal:
+     scrim closes it, Escape closes it, focus is trapped inside while open and
+     handed back to whatever opened it. -->
+<div id="vidDrawer" class="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="vidDrawer-title">
+  <div class="drawer-scrim" data-drawer-close></div>
+  <div class="drawer-panel">
+    <div class="flex items-start justify-between gap-3 px-4 py-3 border-b border-line shrink-0">
+      <div class="min-w-0">
+        <h2 id="vidDrawer-title" class="display text-lg font-semibold leading-snug">The corpus</h2>
+        <p id="vidDrawer-sub" class="text-[12px] text-muted mt-0.5"></p>
+      </div>
+      <button id="vidDrawer-close" type="button" class="shrink-0 w-8 h-8 rounded-full hover:bg-paper2 flex items-center justify-center text-muted text-lg" aria-label="Close the video list">✕</button>
+    </div>
+    <div class="px-4 py-3 border-b border-line shrink-0">
+      <label for="vidFilter" class="sr-only">Filter videos by title</label>
+      <input id="vidFilter" type="search" placeholder="Filter by title"
+        class="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm outline-none focus:border-coral focus:ring-4 focus:ring-coral/15"
+        autocomplete="off">
+    </div>
+    <div id="vidList" class="overflow-y-auto grow px-2 py-2" role="list"></div>
+  </div>
+</div>
 
 <script src="/ui/common.js"></script>
 <script src="/ui/demo.js"></script>

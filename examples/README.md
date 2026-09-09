@@ -5,16 +5,13 @@
 A tiny end-to-end starter. It ingests one visually-rich LLM talk/explainer and
 then queries them by **what's on screen** — diagrams, animations, slides.
 
-The demo corpus:
+It ingests *3Blue1Brown — LLMs explained briefly* (8m): clean animated
+explainers, short enough to finish quickly.
 
-| Video | Length | Why it's here |
-|---|---|---|
-| 3Blue1Brown — *LLMs explained briefly* | 8m | clean animated explainers; short, so a fresh clone seeds fast |
-
-> **Note:** if you run the app with `docker compose up`, the worker
-> **auto-ingests this talk on first boot** (`SEED_SAMPLE_VIDEOS=true`)
-> — no manual step needed. This script is the manual, in-process route, plus
-> a terminal demo of the sample queries.
+> **Note:** the app itself needs none of this. `docker compose up` loads a
+> **ten-video demo corpus that ships pre-indexed** in `demo_corpus/` — nothing is
+> downloaded or embedded at startup. This script is the manual, in-process route,
+> useful for seeing the pipeline run.
 
 ### Run it
 

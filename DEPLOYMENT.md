@@ -40,6 +40,18 @@ That OpenAI key covers the **written answer**, **transcript embeddings**, and **
 
 > No OpenAI key? The app still runs — you get ranked, clickable moments, just no written answer.
 
+### The demo on a cloud deploy
+
+Locally, the ten demo videos load from `demo_corpus/` in the repo — nothing is
+indexed. **That folder is not in the Docker image**, so a cloud deploy has two
+choices:
+
+| | What to set | What happens |
+|---|---|---|
+| **Index them into your stores** (simplest) | `DEMO_LOCAL=false` + `SEED_MODE=ingest` | The ten videos are indexed once, into your Qdrant and bucket. ~45 min, needs YouTube to cooperate (`YT_COOKIES_B64` or `SOCIALKIT_API_KEY`). |
+| **Ship the folder** | Add `COPY demo_corpus/ demo_corpus/` to the Dockerfile, run a Qdrant beside the app, point `DEMO_QDRANT_URL` at it | Demo stays free and instant, as it is locally. |
+| **No demo** | `SEED_SAMPLE_VIDEOS=false` | `/demo` is empty; the workspace works normally. |
+
 **Storage** is the one thing that changes per cloud — you set it up **in the deploy guide** (Step 3), which walks you through the bucket + keys + CORS.
 
 ---

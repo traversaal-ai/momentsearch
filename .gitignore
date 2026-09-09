@@ -45,3 +45,7 @@ diagrams/
 .idea/
 .vscode/
 *.log
+
+# Prebuilt demo corpus — COMMITTED (the presets point at it), except Qdrant's own
+# storage tree, which is ~1GB of preallocated segment files for 2k vectors.
+demo_corpus/qdrant/
