@@ -26,6 +26,7 @@ from .. import config, db, llm, storage
 from ..config import (BRANCH_TOP_K, CONFIDENCE_THRESHOLD, CROSS_MODAL_BOOST,
                       FUSION_WINDOW_S, RRF_K, TEXT_CONFIDENCE_THRESHOLD, TOP_K)
 from . import query_split, vector_store
+from ..providers.embed.sparse import embed_sparse_query
 from .embeddings import embed_query, embed_text
 
 ABSTAIN = ("I couldn't find that in your videos — nothing indexed looks "
@@ -134,9 +135,15 @@ def _match_pct(w: dict) -> int:
     tx = w.get("text")
     if tx:
         # The reranker already outputs a 0-1 relevance; prefer it when present.
-        strengths.append(w["rerank"] if "rerank" in w else
-                         _norm(tx.get("score", 0.0),
-                               config.TEXT_CONFIDENCE_THRESHOLD, config.TEXT_STRONG))
+        if "rerank" in w:
+            strengths.append(w["rerank"])
+        elif tx.get("score", 0.0) <= 0.0 and tx.get("sparse_score") is not None:
+            # Found by BM25 alone (no dense cosine to normalise, reranker off):
+            # an exact-word hit is real evidence, shown as a solid mid strength.
+            strengths.append(0.5)
+        else:
+            strengths.append(_norm(tx.get("score", 0.0),
+                                   config.TEXT_CONFIDENCE_THRESHOLD, config.TEXT_STRONG))
     s = max(strengths) if strengths else 0.0
     BASE = 50   # a just-cleared moment reads ~50%, a clearly-strong one ~100%
     return int(round(BASE + s * (100 - BASE)))
@@ -223,6 +230,40 @@ def _prune(windows: list[dict], best_visual: float) -> list[dict]:
     return [w for w in windows if frame_ok(w) or text_ok(w)]
 
 
+def _merge_text(dense: list[dict], sparse: list[dict]) -> list[dict]:
+    """Hybrid text: one ranked transcript list out of the dense and BM25 lists.
+
+    The two score scales have nothing in common (cosine ~0.5 vs BM25 ~5-20), so
+    this is RRF again, one level down: rank each list, sum 1/(RRF_K + rank), with
+    SPARSE_RRF_WEIGHT scaling BM25's say. A chunk both lists found rises; a chunk
+    only BM25 found — the exact identifier the embedding blurred — gets in on its
+    rank alone. Each hit keeps its dense cosine as `score` (the gate and the match
+    % read that) and carries `sparse_score` when BM25 saw it; a BM25-only hit has
+    score 0.0, never its BM25 number, so no unbounded value leaks into a cosine
+    threshold. Trimmed back to BRANCH_TOP_K so the candidate pool stays the size
+    the fusion and reranker were tuned for."""
+    if not sparse:
+        return dense
+    if not dense:
+        return [{**h, "sparse_score": h["score"], "score": 0.0} for h in sparse][:BRANCH_TOP_K]
+
+    def key(h: dict) -> tuple:
+        return (h.get("video_id"), int(h.get("ms", 0)))
+
+    acc: dict[tuple, dict] = {}
+    for rank, h in enumerate(dense):
+        acc[key(h)] = {"hit": dict(h), "rrf": 1.0 / (RRF_K + rank)}
+    for rank, h in enumerate(sparse):
+        k, s = key(h), config.SPARSE_RRF_WEIGHT / (RRF_K + rank)
+        if k in acc:
+            acc[k]["rrf"] += s
+            acc[k]["hit"]["sparse_score"] = h["score"]
+        else:
+            acc[k] = {"hit": {**h, "sparse_score": h["score"], "score": 0.0}, "rrf": s}
+    merged = sorted(acc.values(), key=lambda x: x["rrf"], reverse=True)
+    return [x["hit"] for x in merged][:BRANCH_TOP_K]
+
+
 def _noop_stage(stage: str, detail: str = "") -> None:
     """Default progress sink. Callers that want to show what the pipeline is
     doing (the UI's streaming ask) pass their own on_stage; everyone else pays
@@ -245,25 +286,37 @@ def retrieve(question: str, user_id: str, *, top_k: int | None = None,
     video_ids scopes the search to chosen videos (UI select/unselect);
     include_samples keeps the shared sample corpus searchable from any workspace."""
     k = top_k or TOP_K
+    scope = dict(top_k=BRANCH_TOP_K, video_id=video_id, video_ids=video_ids,
+                 include_samples=include_samples)
 
-    # Visual branch — CLIP text→image.
+    # Three branches, each "embed the question, then query Qdrant", run at once:
+    # CLIP text→frame, dense text→transcript, BM25 text→transcript. They share
+    # nothing, and the slowest (a hosted text embedding, ~300ms) hides the rest.
+    def visual():
+        return vector_store.search(embed_text(question), user_id, **scope)
+
+    def dense_text():
+        return vector_store.search_text(embed_query(question), user_id, **scope)
+
+    def sparse_text():
+        return vector_store.search_sparse(embed_sparse_query(question), user_id, **scope)
+
     on_stage("embedding")
-    qvec = embed_text(question)
-    on_stage("searching")
-    vhits = vector_store.search(qvec, user_id, top_k=BRANCH_TOP_K,
-                                video_id=video_id, video_ids=video_ids,
-                                include_samples=include_samples)
-    best_visual = vhits[0]["score"] if vhits else 0.0
-
-    # Text branch — bge query→transcript-chunk (only if transcript is enabled).
-    thits: list[dict] = []
-    best_text = 0.0
+    jobs = [visual]
     if config.ENABLE_TRANSCRIPT:
-        thits = vector_store.search_text(embed_query(question), user_id,
-                                         top_k=BRANCH_TOP_K, video_id=video_id,
-                                         video_ids=video_ids,
-                                         include_samples=include_samples)
-        best_text = thits[0]["score"] if thits else 0.0
+        jobs.append(dense_text)
+        if config.ENABLE_HYBRID:
+            jobs.append(sparse_text)
+    on_stage("searching")
+    with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+        results = list(ex.map(lambda f: f(), jobs))
+    vhits = results[0]
+    dhits = results[1] if config.ENABLE_TRANSCRIPT else []
+    shits = results[2] if (config.ENABLE_TRANSCRIPT and config.ENABLE_HYBRID) else []
+    best_visual = vhits[0]["score"] if vhits else 0.0
+    # The gate reads the DENSE best only — BM25 scores have no threshold meaning.
+    best_text = dhits[0]["score"] if dhits else 0.0
+    thits = _merge_text(dhits, shits)
 
     fused = _fuse(vhits, thits)
     on_stage("ranking", f"{len(fused)} candidate moments")

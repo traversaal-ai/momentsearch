@@ -15,6 +15,12 @@ Point IDs are uuid5 of "{video_id}:{frame_idx}" — deterministic, so re-runs
 overwrite instead of duplicating. Payloads are trimmed to filter/display
 fields (user_id, video_id, ms, idx, embed_version); titles and URLs live in
 Postgres and are joined at answer time.
+
+Two collections, two names, both from config and nowhere else: IMAGE_COLLECTION
+(one dense CLIP vector per frame) and TEXT_COLLECTION (per transcript chunk, the
+dense text vector under Qdrant's default name PLUS a BM25 sparse vector under
+SPARSE_VECTOR — hybrid search lives inside the one collection, see
+config.ENABLE_HYBRID).
 """
 from __future__ import annotations
 
@@ -27,17 +33,20 @@ from qdrant_client.http import models as qm
 
 from ..config import (
     DEFAULT_USER_ID,
-    QDRANT_API_KEY,
+    DEMO_LOCAL,
+    DEMO_QDRANT_API_KEY,
+    DEMO_QDRANT_URL,
+    ENABLE_HYBRID,
     IMAGE_COLLECTION,
+    QDRANT_API_KEY,
     QDRANT_HNSW_ON_DISK,
     QDRANT_LOCAL_PATH,
     QDRANT_ON_DISK,
     QDRANT_QUANTIZATION,
     QDRANT_URL,
+    SPARSE_VECTOR,
+    SPARSE_VERSION,
     TEXT_COLLECTION,
-    DEMO_LOCAL,
-    DEMO_QDRANT_API_KEY,
-    DEMO_QDRANT_URL,
 )
 from ..providers.embed import image_dim, text_dim
 from ..samples import SAMPLE_IDS, is_sample
@@ -139,7 +148,85 @@ def _existing_dim(collection: str) -> int | None:
         return None
 
 
-def _ensure(collection: str, dim: int) -> None:
+# One cached answer per (store, collection): "does it carry the sparse slot?".
+# Consulted on every BM25 query and every text upsert, so it must not cost a
+# round trip each time; invalidated by the rebuild that adds the slot.
+_sparse_known: dict[tuple[int, str], bool] = {}
+_warned_no_sparse: set[str] = set()
+
+
+def has_sparse(qc: QdrantClient, collection: str) -> bool:
+    """Does this collection carry the SPARSE_VECTOR slot? Cached."""
+    key = (id(qc), collection)
+    if key not in _sparse_known:
+        try:
+            sparse = qc.get_collection(collection).config.params.sparse_vectors or {}
+            _sparse_known[key] = SPARSE_VECTOR in sparse
+        except Exception:
+            return False          # unknown (store down / no collection): don't cache
+    return _sparse_known[key]
+
+
+def sparse_params() -> dict:
+    """The one definition of the sparse slot. modifier=IDF: Qdrant applies the
+    inverse-document-frequency half of BM25 at query time from live collection
+    stats, so points store term frequencies only and never go stale."""
+    return {SPARSE_VECTOR: qm.SparseVectorParams(modifier=qm.Modifier.IDF)}
+
+
+def create_collection(qc: QdrantClient, collection: str, dim: int, *,
+                      sparse: bool = False,
+                      distance: qm.Distance = qm.Distance.COSINE) -> None:
+    """THE way a collection is created — the low-RAM profile plus, for the text
+    collection, the BM25 slot. Used by ingest (_ensure), the demo restore and
+    the hybrid rebuild, so every store looks the same."""
+    qc.create_collection(
+        collection_name=collection,
+        vectors_config=qm.VectorParams(size=dim, distance=distance, on_disk=QDRANT_ON_DISK),
+        hnsw_config=qm.HnswConfigDiff(on_disk=QDRANT_HNSW_ON_DISK),
+        quantization_config=(
+            qm.ScalarQuantization(scalar=qm.ScalarQuantizationConfig(
+                type=qm.ScalarType.INT8, always_ram=True))
+            if QDRANT_QUANTIZATION else None
+        ),
+        sparse_vectors_config=sparse_params() if sparse else None,
+    )
+    _payload_indexes(qc, collection)
+    _sparse_known[(id(qc), collection)] = sparse
+
+
+def _payload_indexes(qc: QdrantClient, collection: str) -> None:
+    # Tenant index on user_id: co-locates a tenant's points so per-user
+    # searches touch a small slice of the index. video_id for delete/filter.
+    try:
+        qc.create_payload_index(
+            collection_name=collection, field_name="user_id",
+            field_schema=qm.KeywordIndexParams(type=qm.KeywordIndexType.KEYWORD,
+                                               is_tenant=True))
+    except Exception:  # older server without is_tenant, or index already exists
+        try:
+            qc.create_payload_index(collection_name=collection, field_name="user_id",
+                                    field_schema=qm.PayloadSchemaType.KEYWORD)
+        except Exception:
+            pass
+    try:
+        qc.create_payload_index(collection_name=collection, field_name="video_id",
+                                field_schema=qm.PayloadSchemaType.KEYWORD)
+    except Exception:
+        pass
+
+
+def _warn_no_sparse(collection: str) -> None:
+    if collection in _warned_no_sparse:
+        return
+    _warned_no_sparse.add(collection)
+    print(f"[hybrid] '{collection}' has no '{SPARSE_VECTOR}' slot yet — BM25 is skipped "
+          f"and new chunks are indexed dense-only. Run `python -m src.hybrid_backfill "
+          f"--store user` once to add it (in place, same collection, no re-embed).",
+          flush=True)
+
+
+def _ensure(collection: str, dim: int, *, sparse: bool = False) -> None:
     """Create a collection (low-RAM profile) + tenant/video payload indexes.
 
     If the collection already exists with a DIFFERENT vector size, stop. That
@@ -147,6 +234,10 @@ def _ensure(collection: str, dim: int) -> None:
     existing index, and the two failure modes are both bad: Qdrant rejects the
     upsert mid-ingest, or — worse, if the sizes happen to match — search
     silently compares vectors from two unrelated spaces and returns nonsense.
+
+    `sparse` gives a NEW collection the BM25 slot. Qdrant can't add a named
+    vector to an existing collection in place, so an old one is left as it is
+    and a warning names the rebuild command; nothing here ever raises for that.
     """
     c = client()
     if c.collection_exists(collection):
@@ -159,39 +250,11 @@ def _ensure(collection: str, dim: int) -> None:
                 f"provider/model, or re-index this branch: delete the collection "
                 f"and re-ingest (python -m src.providers shows what's configured)."
             )
-    if not c.collection_exists(collection):
-        c.create_collection(
-            collection_name=collection,
-            vectors_config=qm.VectorParams(
-                size=dim,
-                distance=qm.Distance.COSINE,
-                on_disk=QDRANT_ON_DISK,
-            ),
-            hnsw_config=qm.HnswConfigDiff(on_disk=QDRANT_HNSW_ON_DISK),
-            quantization_config=(
-                qm.ScalarQuantization(scalar=qm.ScalarQuantizationConfig(
-                    type=qm.ScalarType.INT8, always_ram=True))
-                if QDRANT_QUANTIZATION else None
-            ),
-        )
-    # Tenant index on user_id: co-locates a tenant's points so per-user
-    # searches touch a small slice of the index. video_id for delete/filter.
-    try:
-        c.create_payload_index(
-            collection_name=collection, field_name="user_id",
-            field_schema=qm.KeywordIndexParams(type=qm.KeywordIndexType.KEYWORD,
-                                               is_tenant=True))
-    except Exception:  # older server without is_tenant, or index already exists
-        try:
-            c.create_payload_index(collection_name=collection, field_name="user_id",
-                                   field_schema=qm.PayloadSchemaType.KEYWORD)
-        except Exception:
-            pass
-    try:
-        c.create_payload_index(collection_name=collection, field_name="video_id",
-                               field_schema=qm.PayloadSchemaType.KEYWORD)
-    except Exception:
-        pass
+        _payload_indexes(c, collection)
+        if sparse and not has_sparse(c, collection):
+            _warn_no_sparse(collection)
+        return
+    create_collection(c, collection, dim, sparse=sparse)
 
 
 def ensure_collection() -> None:
@@ -200,8 +263,9 @@ def ensure_collection() -> None:
 
 
 def ensure_text_collection() -> None:
-    """Transcript collection — dimension comes from TEXT_EMBED_PROVIDER."""
-    _ensure(TEXT_COLLECTION, text_dim())
+    """Transcript collection — dimension comes from TEXT_EMBED_PROVIDER; the
+    BM25 sparse slot rides along when hybrid is on."""
+    _ensure(TEXT_COLLECTION, text_dim(), sparse=ENABLE_HYBRID)
 
 
 def upsert_frames(user_id: str, video_id: str, ids: Iterable[int],
@@ -214,23 +278,30 @@ def upsert_frames(user_id: str, video_id: str, ids: Iterable[int],
         client_for(video_id).upsert(collection_name=IMAGE_COLLECTION, points=points, wait=True)
 
 
-def _query(qc: QdrantClient, collection: str, vector, limit: int,
-           flt) -> list[dict[str, Any]]:
-    """One collection, one store. Returns [] for a store that has never had this
-    collection created — an empty deployment is 'no results', not a 500."""
+def _query(qc: QdrantClient, collection: str, query, limit: int, flt,
+           using: str | None = None) -> list[dict[str, Any]]:
+    """One collection, one store. `query` is a dense list (the default vector) or
+    a qm.SparseVector with `using` naming the sparse slot. Returns [] for a store
+    that has never had this collection (or slot) — an empty deployment is 'no
+    results', not a 500."""
+    dense = using is None
+    if not dense and not has_sparse(qc, collection):
+        return []                 # legacy store, not backfilled yet: BM25 has nothing to say
     try:
         hits = qc.query_points(
-            collection_name=collection, query=vector.tolist(), limit=limit,
+            collection_name=collection, query=query, using=using, limit=limit,
             query_filter=flt, with_payload=True,
+            # Quantized search is lossy; rescore re-reads the full-precision
+            # vectors from disk for the top candidates. Dense only — sparse
+            # vectors are never quantized.
             search_params=qm.SearchParams(
-                # Quantized search is lossy; rescore re-reads the full-precision
-                # vectors from disk for the top candidates.
                 quantization=qm.QuantizationSearchParams(rescore=True)
                 if QDRANT_QUANTIZATION else None,
-            ),
+            ) if dense else None,
         ).points
     except Exception as exc:
-        if "doesn't exist" in str(exc) or "Not found" in str(exc):
+        msg = str(exc)
+        if "doesn't exist" in msg or "Not found" in msg or "not found" in msg:
             return []
         raise
     return [{"score": float(h.score), **(h.payload or {})} for h in hits]
@@ -245,9 +316,9 @@ def _sample_scope(video_id: str | None, video_ids: list[str] | None) -> list[str
     return sorted(SAMPLE_IDS)
 
 
-def _search_both(collection: str, vector, user_id: str, *, top_k: int,
+def _search_both(collection: str, query, user_id: str, *, top_k: int,
                  video_id: str | None, video_ids: list[str] | None,
-                 include_samples: bool) -> list[dict[str, Any]]:
+                 include_samples: bool, using: str | None = None) -> list[dict[str, Any]]:
     """Search the user's store and — when the samples live elsewhere — the
     shipped one, then merge by score.
 
@@ -257,18 +328,18 @@ def _search_both(collection: str, vector, user_id: str, *, top_k: int,
     does this cost a second round trip.
     """
     if not demo_split():
-        return _query(client(), collection, vector, top_k,
-                      _user_filter(user_id, video_id, video_ids, include_samples))
+        return _query(client(), collection, query, top_k,
+                      _user_filter(user_id, video_id, video_ids, include_samples), using)
 
     scope = _sample_scope(video_id, video_ids)
     # The user's own store never holds samples now, so its filter must not claim
     # them: include_samples=False keeps the tenant branch clean.
-    mine = _query(client(), collection, vector, top_k,
-                  _user_filter(user_id, video_id, video_ids, False))
+    mine = _query(client(), collection, query, top_k,
+                  _user_filter(user_id, video_id, video_ids, False), using)
     if not scope or (user_id != DEFAULT_USER_ID and not include_samples):
         return mine
-    theirs = _query(demo_client(), collection, vector, top_k,
-                    _user_filter(DEFAULT_USER_ID, None, scope, False))
+    theirs = _query(demo_client(), collection, query, top_k,
+                    _user_filter(DEFAULT_USER_ID, None, scope, False), using)
     return sorted(mine + theirs, key=lambda h: h["score"], reverse=True)[:top_k]
 
 
@@ -276,33 +347,142 @@ def search(vector: np.ndarray, user_id: str, *, top_k: int,
            video_id: str | None = None,
            video_ids: list[str] | None = None,
            include_samples: bool = False) -> list[dict[str, Any]]:
-    return _search_both(IMAGE_COLLECTION, vector, user_id, top_k=top_k,
+    return _search_both(IMAGE_COLLECTION, vector.tolist(), user_id, top_k=top_k,
                         video_id=video_id, video_ids=video_ids,
                         include_samples=include_samples)
 
 
 # ── Transcript (text) branch ─────────────────────────────────────────────────
 
+def chunk_point_id(video_id: str, i: int) -> str:
+    """uuid5 of '<video_id>:text:<i>' — re-runs overwrite, never collide with frames."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{video_id}:text:{i}"))
+
+
+def _text_vector(dense: np.ndarray, sparse: tuple[list[int], list[float]] | None):
+    """A text point's vector(s): the dense one alone (Qdrant's default name), or
+    dense + BM25 when hybrid is on. "" IS the default vector's name."""
+    if sparse is None:
+        return dense.tolist()
+    return {"": dense.tolist(),
+            SPARSE_VECTOR: qm.SparseVector(indices=sparse[0], values=sparse[1])}
+
+
 def upsert_chunks(user_id: str, video_id: str, vectors: np.ndarray,
-                  payloads: list[dict[str, Any]]) -> None:
-    """Transcript chunks into the text collection. IDs are uuid5 of
-    '<video_id>:text:<i>' so re-runs overwrite, and never collide with frame ids."""
+                  payloads: list[dict[str, Any]],
+                  sparse: list[tuple[list[int], list[float]]] | None = None) -> None:
+    """Transcript chunks into the text collection. `sparse` (aligned to
+    `vectors`) adds each chunk's BM25 vector; the payload is stamped with
+    SPARSE_VERSION so the backfill knows the point is done. On a collection
+    that predates hybrid (no slot) the sparse part is dropped, not errored —
+    the backfill adds it later, together with the slot."""
+    qc = client_for(video_id)
+    if sparse is not None and not has_sparse(qc, TEXT_COLLECTION):
+        _warn_no_sparse(TEXT_COLLECTION)
+        sparse = None
     points = [
-        qm.PointStruct(id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{video_id}:text:{i}")),
-                       vector=vec.tolist(), payload=payload)
+        qm.PointStruct(id=chunk_point_id(video_id, i),
+                       vector=_text_vector(vec, sparse[i] if sparse else None),
+                       payload={**payload,
+                                **({"sparse_version": SPARSE_VERSION} if sparse else {})})
         for i, (vec, payload) in enumerate(zip(vectors, payloads))
     ]
     if points:
-        client_for(video_id).upsert(collection_name=TEXT_COLLECTION, points=points, wait=True)
+        qc.upsert(collection_name=TEXT_COLLECTION, points=points, wait=True)
 
 
 def search_text(vector: np.ndarray, user_id: str, *, top_k: int,
                 video_id: str | None = None,
                 video_ids: list[str] | None = None,
                 include_samples: bool = False) -> list[dict[str, Any]]:
-    return _search_both(TEXT_COLLECTION, vector, user_id, top_k=top_k,
+    return _search_both(TEXT_COLLECTION, vector.tolist(), user_id, top_k=top_k,
                         video_id=video_id, video_ids=video_ids,
                         include_samples=include_samples)
+
+
+def search_sparse(sparse: tuple[list[int], list[float]], user_id: str, *, top_k: int,
+                  video_id: str | None = None,
+                  video_ids: list[str] | None = None,
+                  include_samples: bool = False) -> list[dict[str, Any]]:
+    """BM25 over the transcript chunks — the lexical half of hybrid search: same
+    collection, same filters, the SPARSE_VECTOR slot. Scores are BM25 (unbounded,
+    corpus-relative), never comparable to the dense cosines: search.py merges the
+    two lists by RANK. A store whose points were never backfilled just returns []."""
+    query = qm.SparseVector(indices=sparse[0], values=sparse[1])
+    return _search_both(TEXT_COLLECTION, query, user_id, top_k=top_k,
+                        video_id=video_id, video_ids=video_ids,
+                        include_samples=include_samples, using=SPARSE_VECTOR)
+
+
+def update_sparse(qc: QdrantClient, ids: list[str],
+                  sparse: list[tuple[list[int], list[float]]]) -> None:
+    """Backfill: attach BM25 vectors to EXISTING text points without touching
+    their dense vector or payload, then stamp them done."""
+    if not ids:
+        return
+    qc.update_vectors(collection_name=TEXT_COLLECTION, wait=True, points=[
+        qm.PointVectors(id=pid, vector={SPARSE_VECTOR: qm.SparseVector(indices=s[0], values=s[1])})
+        for pid, s in zip(ids, sparse)])
+    qc.set_payload(collection_name=TEXT_COLLECTION, wait=True,
+                   payload={"sparse_version": SPARSE_VERSION}, points=ids)
+
+
+def dump_collection(qc: QdrantClient, collection: str):
+    """Every point: (ids, dense vectors as float32 array, payloads). The dense
+    vector is read under Qdrant's default name whether or not the point also
+    carries a sparse one."""
+    ids: list[str] = []
+    vecs: list[list[float]] = []
+    payloads: list[dict] = []
+    offset = None
+    while True:
+        points, offset = qc.scroll(collection_name=collection, limit=512, offset=offset,
+                                   with_payload=True, with_vectors=True)
+        for p in points:
+            v = p.vector
+            if isinstance(v, dict):
+                v = v.get("") or next(x for k, x in v.items() if k != SPARSE_VECTOR)
+            ids.append(str(p.id))
+            vecs.append(v)
+            payloads.append(p.payload or {})
+        if offset is None:
+            break
+    return ids, np.asarray(vecs, dtype=np.float32), payloads
+
+
+def rebuild_with_sparse(qc: QdrantClient, collection: str, sparse_for, backup_path,
+                        batch: int = 128) -> int:
+    """Give an EXISTING text collection the BM25 slot, keeping its NAME and its
+    dense vectors — Qdrant can't add a named vector in place, so this is: read
+    every point out, write a backup file, drop and recreate the collection under
+    the same name with the slot, write every point back with its sparse vector.
+    No re-embedding: the dense vectors are copied, the sparse ones are computed
+    locally from each payload's text by `sparse_for(texts)`. Seconds for a demo
+    corpus, minutes for a large one; the collection is unavailable in between.
+    Returns the number of points written."""
+    import json
+    from pathlib import Path
+
+    ids, vecs, payloads = dump_collection(qc, collection)
+    if not ids:
+        return 0
+    backup_path = Path(backup_path)
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(backup_path, ids=np.array(ids), vectors=vecs,
+                        payloads=np.array([json.dumps(p, ensure_ascii=False) for p in payloads]))
+    params = qc.get_collection(collection).config.params.vectors
+    distance = getattr(params, "distance", qm.Distance.COSINE)
+    qc.delete_collection(collection_name=collection)
+    _sparse_known.pop((id(qc), collection), None)
+    create_collection(qc, collection, int(vecs.shape[1]), sparse=True, distance=distance)
+    for i in range(0, len(ids), batch):
+        texts = [(pl.get("text") or "") for pl in payloads[i:i + batch]]
+        sparse = sparse_for(texts)
+        qc.upsert(collection_name=collection, wait=True, points=[
+            qm.PointStruct(id=ids[i + j], vector=_text_vector(vecs[i + j], sparse[j]),
+                           payload={**payloads[i + j], "sparse_version": SPARSE_VERSION})
+            for j in range(len(texts))])
+    return len(ids)
 
 
 def fetch_chunks(user_id: str, video_id: str) -> list[dict[str, Any]]:

@@ -514,19 +514,36 @@ SEED_STRICT = _envbool("SEED_STRICT", False)
 QDRANT_URL = os.getenv("QDRANT_URL", "").strip()
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "").strip() or os.getenv("QDRANT_TOKEN", "").strip()
 QDRANT_LOCAL_PATH = os.getenv("QDRANT_LOCAL_PATH", str(DATA / "qdrant"))
-# Frame (image) collection — pairs with TEXT_COLLECTION. IMAGE_COLLECTION is the
-# current name; QDRANT_COLLECTION is the legacy one from when frames were the only
-# collection. Both env vars are honored (IMAGE_COLLECTION wins), so existing
-# deploys keep working. The VALUE points at your vectors — rename the var freely,
-# never change the value of a live index.
-IMAGE_COLLECTION = _first_env("IMAGE_COLLECTION", "QDRANT_COLLECTION") or "moments_l14"
-QDRANT_COLLECTION = IMAGE_COLLECTION   # legacy alias (constant + env both still work)
+# Frame (image) collection — pairs with TEXT_COLLECTION. ONE name, from ONE env
+# var: every Qdrant call in the code goes through these two constants and nothing
+# else, so there is exactly one place a collection is named. The VALUE points at
+# your vectors — never change the value of a live index without re-indexing.
+IMAGE_COLLECTION = os.getenv("IMAGE_COLLECTION", "").strip() or "moments_l14"
 # Low-RAM profile: original vectors on disk, int8-quantized copies pinned in
 # RAM (~4x smaller), HNSW graph on disk; queries rescore against the originals.
 # Frames balloon vector counts fast, so these default ON.
 QDRANT_QUANTIZATION = _envbool("QDRANT_QUANTIZATION", True)
 QDRANT_ON_DISK = _envbool("QDRANT_ON_DISK", True)
 QDRANT_HNSW_ON_DISK = _envbool("QDRANT_HNSW_ON_DISK", True)
+
+# --- Hybrid text retrieval (dense + BM25 in the ONE text collection) -----------------
+# Dense embeddings find "roughly this topic"; BM25 finds the chunk that literally
+# says the word — an identifier, a number, a name. Every transcript chunk carries
+# both vectors in TEXT_COLLECTION: the dense one under Qdrant's default name and a
+# sparse one under SPARSE_VECTOR (src/providers/embed/sparse.py, fastembed's
+# Qdrant/bm25: local, keyless, a few MB). At query time both are searched and
+# merged by rank (SPARSE_RRF_WEIGHT scales BM25's say; 1.0 = equal) before the
+# frame branch is fused in. The confidence gate still reads the DENSE best only.
+# Points indexed before this existed have no sparse vector and are simply not
+# found by the BM25 side until `python -m src.hybrid_backfill` adds it — the
+# dense side still finds them, so a half-migrated store degrades, never breaks.
+ENABLE_HYBRID = _envbool("ENABLE_HYBRID", True)
+SPARSE_VECTOR = "bm25"                                  # the named sparse slot on every text point
+SPARSE_MODEL = os.getenv("SPARSE_MODEL", "Qdrant/bm25").strip()
+SPARSE_RRF_WEIGHT = _float("SPARSE_RRF_WEIGHT", 1.0)
+# Stamped on each point's payload when its sparse vector is written; the backfill
+# skips points that already carry the current stamp.
+SPARSE_VERSION = "bm25-v1"
 
 # --- Retrieval / faithfulness ------------------------------------------------------
 TOP_K = _int("TOP_K", 6)                 # frames fed to the multimodal LLM (3-8)

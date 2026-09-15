@@ -17,7 +17,7 @@ The high-level shape (the write/read split, the mermaid overview, one image with
 | **sample** | one ffmpeg pass decodes, samples (interval or scene-cut), downscales and pipes JPEGs to memory. **The biggest scaling lever** — sampling is what stops thousands of videos becoming billions of near-identical vectors. |
 | **dedup** | perceptual hash (dHash + luminance) drops visually-identical neighbours *before* they cost CLIP compute. Thumbnails batch-upload to `{user}/{video}/frames/NNNNNN.jpg`. |
 | **embed + index** | batches of `CLIP_BATCH` frames go to the warm CLIP service, then upsert to `moments_l14` with deterministic IDs (`uuid5(video_id:frame_idx)` — re-runs overwrite, never duplicate). |
-| **transcript** | cues come from SocialKit's transcript API or yt-dlp captions for YouTube, and from ASR (`ASR_PROVIDER`, default OpenAI Whisper) for uploads. With speaker recognition on, Gemini labels who said each cue. Cues are grouped into ~`TRANSCRIPT_CHUNK_SECONDS` (20s) passages that also break on a speaker change, stored durably as `{user}/{video}/transcript.json`, text-embedded and upserted to `moments_text_openai`. Best-effort: no captions, no speech, or any error leaves the video visual-only, sets a `transcript_note` the UI shows, and never fails the run. |
+| **transcript** | cues come from SocialKit's transcript API or yt-dlp captions for YouTube, and from ASR (`ASR_PROVIDER`, default OpenAI Whisper) for uploads. With speaker recognition on, Gemini labels who said each cue. Cues are grouped into ~`TRANSCRIPT_CHUNK_SECONDS` (20s) passages that also break on a speaker change, stored durably as `{user}/{video}/transcript.json`, then each chunk gets **two vectors in the one `moments_text_openai` point**: the dense text embedding and a BM25 sparse vector (`ENABLE_HYBRID`, local fastembed, milliseconds). Best-effort: no captions, no speech, or any error leaves the video visual-only, sets a `transcript_note` the UI shows, and never fails the run. |
 
 Poll `GET /api/videos` until `indexed`.
 
@@ -68,6 +68,8 @@ The one exception is the manifest: sample **rows** are replayed into `DATABASE_U
 
 - **visual** — text-embed the question into the *frame* space → Qdrant `moments_l14`, filtered by `user_id`, quantization-rescored, top `BRANCH_TOP_K` (20).
 - **text** — query-embed → `moments_text_openai` (captions + ASR), top `BRANCH_TOP_K`. Skipped cleanly when `ENABLE_TRANSCRIPT=false` or nothing is indexed.
+- **text, lexical** — the same question as a BM25 sparse vector → the same collection's `bm25` slot, top `BRANCH_TOP_K` (`ENABLE_HYBRID`). Finds the chunk that literally says the identifier, number or name the embedding blurred. The three branches run at once in a thread pool; the slowest (a hosted text embedding) hides the others.
+- **hybrid merge** (`_merge_text`) — the dense and BM25 text lists become ONE ranked text list by RRF, `SPARSE_RRF_WEIGHT` scaling BM25's say. Each hit keeps its dense cosine as `score` (a BM25-only hit carries `score 0` and its `sparse_score`), so no unbounded BM25 number ever reaches a cosine threshold. The gate reads the dense best only.
 - With `DEMO_LOCAL` splitting the stores, each branch queries the user's Qdrant and the bundled one and merges by score.
 - A split question runs this once **per part, in parallel**, sharing `MULTI_QUERY_TOTAL_K` (12) moments out across the parts (6+6, or 4+4+4).
 
@@ -106,14 +108,18 @@ flowchart TB
   sp -->|"per part, in parallel"| te
   ve["visual branch<br/>CLIP text-embed · top BRANCH_TOP_K"]
   te["text branch<br/>OpenAI query-embed · top BRANCH_TOP_K"]
+  se["lexical branch (ENABLE_HYBRID)<br/>BM25 sparse query · top BRANCH_TOP_K"]
+  sp -->|"per part, in parallel"| se
 
   ve -->|"kNN, user_id filter"| vq[("Qdrant 'moments_l14'<br/>int8 · on-disk · rescore")]
-  te -->|"kNN, user_id filter"| tq[("Qdrant 'moments_text_openai'<br/>captions + ASR")]
+  te -->|"kNN, user_id filter"| tq[("Qdrant 'moments_text_openai'<br/>dense + bm25 per chunk")]
+  se -->|"sparse kNN, same filter"| tq
+  tq --> hm["hybrid merge — RRF of dense + BM25 text ranks<br/>(SPARSE_RRF_WEIGHT) → one text list"]
   dq[("bundled demo Qdrant (DEMO_LOCAL)<br/>samples' vectors · merged by score")] -.- vq
   dq -.- tq
 
   vq --> fuse
-  tq --> fuse
+  hm --> fuse
 
   subgraph fuse["Scoring — src/rag/search.py :: _fuse · _rerank · _prune"]
     direction TB
@@ -235,6 +241,7 @@ Repo root holds only build/config/docs; **all Python lives under `src/`**.
     ├── demo_corpus_io.py    the corpus's vectors as npz — export on build, import on first boot
     ├── build_demo_corpus.py rebuilds demo_corpus/ with the real pipeline (run by hand, rarely)
     ├── seeding.py           blocking seed-to-completion logic (SEED_MODE=ingest)
+    ├── hybrid_backfill.py   add BM25 sparse vectors to text chunks indexed before hybrid (in place, no re-embed)
     ├── dispatcher.py        WFQ: fair round-robin admission of pending videos
     ├── llm.py               back-compat shim → src/providers/llm
     ├── api/                 ── HTTP routers (see API.md) ─────────────────────
@@ -247,7 +254,7 @@ Repo root holds only build/config/docs; **all Python lives under `src/`**.
     │   ├── status.py        configured/installed/missing — GET /api/providers
     │   ├── __main__.py      `python -m src.providers` model doctor (+ --live)
     │   ├── llm/             answer synthesis: base.py (prompt, config), one module per wire dialect
-    │   └── embed/           retrieval embeddings, both branches (clip_local, fastembed, openai, gemini, cohere, voyage, jina, remote)
+    │   └── embed/           retrieval embeddings, both branches (clip_local, fastembed, openai, gemini, cohere, voyage, jina, remote) + sparse.py (BM25)
     ├── ingest/
     │   ├── fetch.py         source acquisition (bucket | SocialKit | yt-dlp) + sha256
     │   ├── socialkit.py     SocialKit API: YouTube transcript + video download by key
@@ -260,7 +267,7 @@ Repo root holds only build/config/docs; **all Python lives under `src/`**.
     └── rag/
         ├── query_split.py   multi-part questions → self-contained parts (one small LLM call, fail-safe)
         ├── rerank.py        cross-encoder reranker over the fused text moments
-        ├── vector_store.py  multi-tenant Qdrant: visual + text collections, user store + bundled demo store
+        ├── vector_store.py  multi-tenant Qdrant: visual + text collections (text = dense + bm25 sparse), user store + bundled demo store
         ├── embeddings.py    back-compat shim → src/providers/embed
         └── search.py        split → 2-branch retrieve (per part) → RRF fusion → rerank → gate → context → cited answer
 ```

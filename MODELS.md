@@ -191,6 +191,32 @@ TEXT_COLLECTION=moments_text_bge   # bge is 384-dim, its own collection
 `TEXT_EMBED_BASE_URL` reaches any OpenAI-compatible embeddings server
 (vLLM / TEI / Together / DeepInfra / LM Studio) under `TEXT_EMBED_PROVIDER=openai`.
 
+### Hybrid: the transcript branch is dense + BM25
+
+Whatever dense model you pick above, every transcript chunk also gets a **BM25
+sparse vector** in the *same* collection (`ENABLE_HYBRID=true`, the default). It
+is fastembed's `Qdrant/bm25` — a tokenizer and term-frequency table, a few MB,
+CPU, no key — and Qdrant applies the IDF half at query time, so it never goes
+stale. At search time the dense and BM25 lists are merged by rank
+(`SPARSE_RRF_WEIGHT`, default `1.0` = equal say) before frames are fused in.
+
+Why: embeddings find "roughly this topic"; BM25 finds the chunk that literally
+says `__init__`, "300 welds" or "Pinecone". The confidence gate still reads the
+dense score only, so hybrid can add candidates but never changes when the app
+abstains.
+
+Videos indexed before hybrid existed have no sparse vector and are invisible to
+the BM25 side (the dense side still finds them) until you run
+
+```bash
+python -m src.hybrid_backfill --store user      # your own Qdrant, in place, no re-embed
+```
+
+The shipped demo corpus already carries both vectors. Switching the dense model
+still means a fresh `TEXT_COLLECTION`; the sparse vector is rebuilt with it at
+ingest.
+
+
 ---
 
 ## 4 · Reranker  (`RERANK_PROVIDER`)

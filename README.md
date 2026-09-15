@@ -241,7 +241,7 @@ Copy `.env.example` (the full, inline-documented reference) and set what you nee
 | `STORAGE_PROVIDER` | where raw videos + thumbnails live: `local` (default) · `aws` · `gcp` · `gcp_native` · `flyio`. See [Object storage](#object-storage). |
 | `DATABASE_URL` | Postgres connection — the video manifest, status and sessions. |
 | `QDRANT_URL` + `QDRANT_API_KEY` | the vector index. Required — ingest and search both fail without one. |
-| `IMAGE_COLLECTION` / `TEXT_COLLECTION` | the frame and transcript collections (`QDRANT_COLLECTION` is a legacy alias for `IMAGE_COLLECTION`). A new embedding model needs a fresh collection name. |
+| `IMAGE_COLLECTION` / `TEXT_COLLECTION` | the frame and transcript collections — one name each, read from these two variables and nowhere else. The text collection holds both the dense and the BM25 vector of every chunk. A new embedding model needs a fresh collection name. |
 | `PREFECT_API_URL` + `PREFECT_API_KEY` | the ingest queue between the API and the workers. |
 | `LLM_PROVIDER` | the answer LLM (vision-capable). Blank = retrieval-only. |
 | `IMAGE_EMBED_PROVIDER` | frame embeddings — the visual branch (default local `clip`). |
@@ -250,7 +250,7 @@ Copy `.env.example` (the full, inline-documented reference) and set what you nee
 | `ASR_PROVIDER` | speech-to-text for uploaded videos (default `openai` / Whisper). |
 | `GEMINI_API_KEY` | required for speaker recognition ("who said what"). |
 
-**Feature flags:** `ENABLE_TRANSCRIPT` (the transcript branch), `ENABLE_RERANK` (reranker), `MULTI_QUERY` (split a multi-part question and search each part in parallel), `DIARIZE_ENABLED` (speaker recognition master switch), `DEMO_LOCAL` (read the ten demo videos from `demo_corpus/` — off means host them yourself, which re-indexes them).
+**Feature flags:** `ENABLE_TRANSCRIPT` (the transcript branch), `ENABLE_HYBRID` (transcript search is dense + BM25, so exact words are findable), `ENABLE_RERANK` (reranker), `MULTI_QUERY` (split a multi-part question and search each part in parallel), `DIARIZE_ENABLED` (speaker recognition master switch), `DEMO_LOCAL` (read the ten demo videos from `demo_corpus/` — off means host them yourself, which re-indexes them).
 
 ### YouTube ingest
 
@@ -329,7 +329,7 @@ flowchart LR
     obj[("Object storage<br/>S3 / GCS / Tigris")]
     pg[("Neon Postgres<br/>manifest · status · sessions")]
     prefect[("Prefect Cloud<br/>queue · retries · dashboard")]
-    qdrant[("Qdrant Cloud<br/>moments_l14 + moments_text_openai")]
+    qdrant[("Qdrant Cloud<br/>moments_l14 · moments_text_openai (dense + BM25)")]
     vlm[("Vision LLM<br/>OpenAI · Gemini · Anthropic · vLLM")]
   end
 
@@ -354,7 +354,7 @@ flowchart LR
   %% read path
   user -->|"ask"| api
   api -->|"split? · embed query"| clip
-  api -->|"kNN · both branches"| qdrant
+  api -->|"kNN · frames + dense text + BM25"| qdrant
   api -->|"samples' kNN + frames"| demo
   api -->|"moments + context"| vlm
 
@@ -368,7 +368,7 @@ It's **one Docker image** with four entrypoints — the API, the ingest worker, 
 
 **Write path — upload to searchable vectors.** The browser presigns (`POST /api/videos/presign`), PUTs the file straight to the bucket, then registers it (`POST /api/videos`, which also takes a YouTube URL); the API HEAD-verifies the object, writes a `pending` row, hands it to the fair dispatcher and returns `202`. A worker then fetches the source (YouTube via the SocialKit API or yt-dlp) and hashes it (duplicates are skipped), samples keyframes with one ffmpeg pass, dedups near-identical frames, embeds the survivors and upserts them to the visual collection with deterministic IDs, then indexes the speech: YouTube captions or Whisper for uploads, optionally labelled by speaker with Gemini, in ~20s chunks in the transcript collection. Poll `GET /api/videos` until `indexed`.
 
-**Read path — question to answer-or-abstain.** `POST /api/ask` first asks the answer model, in parallel with retrieval, whether the question has several parts, and splits it if so (each part is then retrieved in parallel). It embeds the question into **both** branches (no query router), fuses the hits by rank (RRF), collapses same-instant frame+transcript hits into single moments with a cross-modal boost, and reranks. A **confidence gate** on the raw per-branch bests abstains — with no LLM call — when neither what's on screen nor what's said clears its threshold. Otherwise the top moments' frames, transcript excerpts and the speech around each go to the vision LLM, which answers every part only from them and cites `[n]`; invented citations are stripped and timestamps come from the payload, never the LLM. `POST /api/ask_stream` and its session twin report each stage (`embedding → searching → ranking → [splitting → parts] → reading → answering`) over Server-Sent Events.
+**Read path — question to answer-or-abstain.** `POST /api/ask` first asks the answer model, in parallel with retrieval, whether the question has several parts, and splits it if so (each part is then retrieved in parallel). It embeds the question into **both** branches (no query router), fuses the hits by rank (RRF), collapses same-instant frame+transcript hits into single moments with a cross-modal boost, and reranks; the transcript branch is itself **hybrid** — a dense embedding and a BM25 keyword search over the same chunks, merged by rank, so an exact name, number or identifier is found even when the embedding blurs it. A **confidence gate** on the raw per-branch bests abstains — with no LLM call — when neither what's on screen nor what's said clears its threshold. Otherwise the top moments' frames, transcript excerpts and the speech around each go to the vision LLM, which answers every part only from them and cites `[n]`; invented citations are stripped and timestamps come from the payload, never the LLM. `POST /api/ask_stream` and its session twin report each stage (`embedding → searching → ranking → [splitting → parts] → reading → answering`) over Server-Sent Events.
 
 > Deeper internals — Qdrant at frame scale, "embedding is a URL", fair scheduling (WFQ), the full read path and the stage-by-stage pipeline tables — are in **[ARCHITECTURE.md](ARCHITECTURE.md)**. Every HTTP endpoint, its fields, and how to drive the app from your own UI or scripts are in **[API.md](API.md)**.
 

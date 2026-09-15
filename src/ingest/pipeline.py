@@ -143,7 +143,7 @@ def t_transcript(video_id: str, user_id: str, path: str | None = None) -> int:
     effort: no captions, no audio, or any failure just leaves the video visual-
     only — never fails the flow. Runs AFTER embed-index (whose delete clears both
     branches first)."""
-    from ..config import ENABLE_TRANSCRIPT, TEXT_EMBED_VERSION
+    from ..config import ENABLE_HYBRID, ENABLE_TRANSCRIPT, TEXT_EMBED_VERSION
     from ..rag.embeddings import embed_docs
     from .transcript import chunk_cues, get_youtube_cues
 
@@ -191,13 +191,21 @@ def t_transcript(video_id: str, user_id: str, path: str | None = None) -> int:
         except Exception as exc:
             print(f"[transcript] {video_id}: bucket store failed ({exc}) — indexing anyway")
         vector_store.ensure_text_collection()
-        vecs = embed_docs([c["text"] for c in chunks])
+        texts = [c["text"] for c in chunks]
+        vecs = embed_docs(texts)
+        # Hybrid: the same chunk also gets a BM25 sparse vector, in the same
+        # collection, so exact words (names, numbers, identifiers) are findable.
+        # Local and keyless (fastembed), milliseconds for a whole video.
+        sparse = None
+        if ENABLE_HYBRID:
+            from ..providers.embed.sparse import embed_sparse_docs
+            sparse = embed_sparse_docs(texts)
         vector_store.upsert_chunks(user_id, video_id, vecs, payloads=[
             {"user_id": user_id, "video_id": video_id, "modality": "text",
              "t_start": c["t_start"], "t_end": c["t_end"],
              "ms": int(c["t_start"] * 1000), "text": c["text"],
              **({"speaker": c["speaker"]} if c.get("speaker") else {}),
-             "embed_version": TEXT_EMBED_VERSION} for c in chunks])
+             "embed_version": TEXT_EMBED_VERSION} for c in chunks], sparse=sparse)
         print(f"[transcript] {video_id}: indexed {len(chunks)} transcript chunks ({origin})")
         db.set_transcript_note(video_id, None)          # success — clear any prior warning
         return len(chunks)
